@@ -10,7 +10,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: startsWith(github.event.head_commit.message, 'RELEASE')
+    if: startsWith(github.event.head_commit.message, 'DEPLOY')
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
