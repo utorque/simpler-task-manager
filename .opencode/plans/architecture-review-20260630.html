@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — Simpler Smart Calendar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #f8fafc; }
+      .legend-line { border-left: 4px solid #475569; }
+      .legend-deep { border-left: 4px solid #0f172a; background:#f8fafc; }
+      .legend-seam { border-left: 4px dashed #475569; }
+      .legend-leak { border-left: 4px solid #dc2626; }
+      .mod { border:1px solid #94a3b8; background:#fff; padding:6px 10px; border-radius:4px; font-size: 11px; letter-spacing:.06em; text-transform:uppercase; }
+      .mod-deep { border:2px solid #0f172a; background:#0f172a; color:#f8fafc; padding:10px 12px; border-radius:6px; font-size: 11px; letter-spacing:.06em; text-transform:uppercase; }
+      .mod-faded { border:1px dashed #94a3b8; background:#f1f5f9; color:#64748b; padding:6px 10px; border-radius:4px; font-size: 10px; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="border-b border-slate-200 pb-6">
+        <h1 class="text-3xl font-serif">Architecture review — Simpler Smart Calendar</h1>
+        <div class="text-sm text-slate-500 mt-1">2026-06-30 · 5 deepening candidates · read with the <code class="bg-slate-100 px-1 rounded">codebase-design</code> glossary</div>
+        <div class="mt-5 flex flex-wrap gap-4 text-xs">
+          <div class="legend-line pl-3 py-1 rounded">solid box = module</div>
+          <div class="legend-seam pl-3 py-1 rounded bg-slate-100">dashed = seam</div>
+          <div class="legend-leak pl-3 py-1 rounded bg-red-50">red arrow = leakage</div>
+          <div class="legend-deep pl-3 py-1 rounded">dark box = deep module</div>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-12">
+
+        <!-- ============ CANDIDATE 1 ============ -->
+        <article id="c1" class="space-y-4">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-serif">1 · Collapse the ChangeLog + CRUD rewrite into one seam</h2>
+            <div class="flex gap-2">
+              <span class="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2 py-1 rounded">Strong</span>
+              <span class="bg-slate-100 text-slate-700 text-xs font-semibold px-2 py-1 rounded">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded p-3">
+            src/app.py (10 sites: L103-114, 156-169, 211-222, 233-244, 256-267, 303-314, 334-345, 524-534, 560-570, 580-591)<br/>
+            src/models.py (ChangeLog L81-101, no actor column)
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <!-- BEFORE -->
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — 10 scattered audit stanzas</div>
+              <pre class="mermaid">
+flowchart TB
+  R1["route /tasks POST"] --> C1["commit()"]
+  C1 --> A1["ChangeLog(...)"]
+  A1 --> C1b["commit() again"])
+  R2["route /tasks PUT"] --> C2["commit()"]
+  C2 --> A2["ChangeLog(...)"]
+  A2 --> C2b["commit() again"])
+  R3["route /notes POST"] --> C3["commit()"]
+  C3 --> A3["ChangeLog(...)"]
+  A3 --> C3b["commit() again"])
+  Dots["...7 more..."]
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class C1b,C2b,C3b leak
+              </pre>
+              <div class="text-xs text-slate-600 mt-2">Two commits per mutation. Non-transactional. Reorder uses a partial dict, breaking the invariant the other 9 sites hold.</div>
+            </div>
+            <!-- AFTER -->
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — one audited-write interface</div>
+              <div class="h-64 flex flex-col items-center justify-center gap-3">
+                <div class="mod-faded text-center">route /tasks POST</div>
+                <div class="text-slate-400 text-lg">↓</div>
+                <div class="mod-deep text-center w-3/4">audited_write(entity, action, actor) — single tx, single commit</div>
+                <div class="text-slate-400 text-lg">↓ uses</div>
+                <div class="mod-faded text-center">ChangeLog row (now carries actor)</div>
+              </div>
+              <div class="text-xs text-slate-600 mt-2">10 stanzas → 1 interface. Mutations and audit land in one transaction. Future UserConfig CRUD plugs in for free.</div>
+            </div>
+          </div>
+
+          <p class="text-sm"><strong>Problem.</strong> Every CRUD route reimplements the same 6–7-line audit pattern with two separate commits; one reorder route diverges with a partial dict.</p>
+          <p class="text-sm"><strong>Solution.</strong> A single <code>audited_write(entity, action, actor)</code> helper that opens one transaction, writes the entity, writes the ChangeLog row (now with an <code>actor</code> column), and commits once.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700">
+            <li><strong>locality:</strong> audit logic lives in one place, bugs fixed once</li>
+            <li><strong>leverage:</strong> N route call sites, 1 interface</li>
+            <li><strong>test surface:</strong> one seam covers all 10 actors</li>
+            <li>Opens the <code>actor</code> column ChangeLog's docstring already promises</li>
+          </ul>
+        </article>
+
+        <!-- ============ CANDIDATE 2 ============ -->
+        <article id="c2" class="space-y-4">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-serif">2 · Deepen <code>schedule_tasks</code> off the ORM</h2>
+            <div class="flex gap-2">
+              <span class="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2 py-1 rounded">Strong</span>
+              <span class="bg-slate-100 text-slate-700 text-xs font-semibold px-2 py-1 rounded">ports &amp; adapters</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded p-3">
+            src/scheduler.py (L13-78; esp. L57 reads deprecated Task.space)<br/>
+            src/app.py:355 (passes Task.query results straight in)<br/>
+            src/static/js/app.js:1129-1133 (frontend joins on task.space string)
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — scheduler reaches through the ORM</div>
+              <pre class="mermaid">
+flowchart LR
+  DB[(SQLite)] --> ORM[Task ORM objects]
+  ORM -->|"reads .space<br/>(deprecated string)"| S[schedule_tasks]
+  ORM -->|"reads .frozen,.deadline,<br/>.priority,...8 attrs"| S
+  S -.leaks.-> SC[space string]
+  S --> CAL[calendar UI]
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class SC leak
+              </pre>
+              <div class="text-xs text-slate-600 mt-2">Scheduler knows SQLAlchemy attribute names AND joins spaces by string. Zero tests possible without building ORM rows.</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — scheduler takes plain data</div>
+              <pre class="mermaid">
+flowchart LR
+  ORM[Task ORM] --> A["to_schedulable(task)"]
+  A -->|"SchedulableTask dict<br/>space_id, frozen, deadline,<br/>priority, duration, scheduled_*"| S[schedule_tasks]
+  S --> CAL[calendar UI]
+  S -.seam.-> T[tests: hand-built dicts]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a
+  class S deep
+              </pre>
+              <div class="text-xs text-slate-600 mt-2">One adapter at the seam. Tests build dicts in 3 lines. The open "not all tasks planned" bug gets a failing test on day one.</div>
+            </div>
+          </div>
+
+          <p class="text-sm"><strong>Problem.</strong> <code>schedule_tasks</code> consumes ORM objects and the deprecated <code>Task.space</code> string; the seam is so leaky that no test can exist — and there's an open scheduling bug with no regression net.</p>
+          <p class="text-sm"><strong>Solution.</strong> Narrow the interface to a <code>SchedulableTask</code> data shape (8 fields keyed by <code>space_id</code>); a one-line adapter builds it from ORM objects at the route. Scheduler becomes pure-over-data.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700">
+            <li><strong>leverage:</strong> one interface, N call sites + M tests</li>
+            <li><strong>locality:</strong> slot-grid bugs concentrate in one module</li>
+            <li><strong>tests:</strong> the interface IS the test surface — no DB needed</li>
+            <li>Removes the last scheduler-side read of the deprecated <code>space</code> string</li>
+          </ul>
+          <div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+            Ripples into <code>app.py:355</code> (one-line adapter) and the frontend's <code>task.space</code> grouping — pick this together with candidate 4 (<a href="#c4">complete the space_id migration</a>).
+          </div>
+        </article>
+
+        <!-- ============ CANDIDATE 3 ============ -->
+        <article id="c3" class="space-y-4">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-serif">3 · Split <code>app.py</code> into per-domain blueprints + extraction modules</h2>
+            <div class="flex gap-2">
+              <span class="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2 py-1 rounded">Strong</span>
+              <span class="bg-slate-100 text-slate-700 text-xs font-semibold px-2 py-1 rounded">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded p-3">
+            src/app.py (680 lines / 20.7KB — 24 routes + auth + seeding + parsing + 10 ChangeLog writes)<br/>
+            prompt-context assembly duplicated: L131-139 vs L622-630<br/>
+            default-space seeding lives here: L651-676 (duplicated in tests/conftest.py:56-87)
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — one god module, 680 lines</div>
+              <div class="space-y-1">
+                <div class="h-7 border-l-4 border-slate-400 pl-2 text-xs flex items-center bg-slate-50">tasks routes (~283 lines)</div>
+                <div class="h-7 border-l-4 border-slate-400 pl-2 text-xs flex items-center bg-slate-50">notes routes (~141 lines)</div>
+                <div class="h-7 border-l-4 border-slate-400 pl-2 text-xs flex items-center bg-slate-50">spaces routes (~48 lines)</div>
+                <div class="h-7 border-l-4 border-slate-400 pl-2 text-xs flex items-center bg-slate-50">calendar_sources (~31)</div>
+                <div class="h-7 border-l-4 border-slate-400 pl-2 text-xs flex items-center bg-slate-50">schedule / external-events / logs</div>
+                <div class="h-7 border-l-4 border-red-400 pl-2 text-xs flex items-center bg-red-50">parse_iso_datetime + login_required</div>
+                <div class="h-7 border-l-4 border-red-400 pl-2 text-xs flex items-center bg-red-50">default-space seeding (import-time side effect)</div>
+                <div class="h-7 border-l-4 border-red-400 pl-2 text-xs flex items-center bg-red-50">prompt-context assembly ×3</div>
+                <div class="h-7 border-l-4 border-red-400 pl-2 text-xs flex items-center bg-red-50">10 ChangeLog stanzas</div>
+              </div>
+              <div class="text-xs text-slate-600 mt-2">Non-route logic buried among routes. Tests must redirect the DB URI before importing app because import has side effects.</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — blueprints + extracted modules</div>
+              <div class="space-y-2">
+                <div class="grid grid-cols-4 gap-1">
+                  <div class="mod-faded text-center">tasks bp</div>
+                  <div class="mod-faded text-center">notes bp</div>
+                  <div class="mod-faded text-center">spaces bp</div>
+                  <div class="mod-faded text-center">schedule bp</div>
+                </div>
+                <div class="grid grid-cols-2 gap-1">
+                  <div class="mod-deep text-center">datetime &amp; validation module</div>
+                  <div class="mod-deep text-center">prompt-context assembler</div>
+                </div>
+                <div class="mod-deep text-center w-full">audited_write seam (candidate 1)</div>
+                <div class="mod-faded text-center w-full">seeding module (lazy, test-friendly)</div>
+              </div>
+              <div class="text-xs text-slate-600 mt-2">Routes shrink to thin adapters. Each domain testable in isolation. <code>app.py</code> becomes app factory only.</div>
+            </div>
+          </div>
+
+          <p class="text-sm"><strong>Problem.</strong> <code>app.py</code> is a god module: 680 lines, 24 routes, plus auth, datetime parsing, seeding, and prompt assembly. Importing it writes to the prod DB as a side effect — tests had to work around this.</p>
+          <p class="text-sm"><strong>Solution.</strong> Move routes into Flask blueprints (<code>tasks</code>, <code>notes</code>, <code>spaces</code>, <code>schedule</code>, <code>calendar_sources</code>). Lift <code>parse_iso_datetime</code>, prompt-context assembly, and default-space seeding into their own modules. <code>app.py</code> becomes an app factory: <code>create_app(config) -&gt; app</code>.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700">
+            <li><strong>locality:</strong> route bugs concentrate in their domain blueprint</li>
+            <li><strong>leverage:</strong> test harness imports domains without DB side-effects</li>
+            <li>De-duplicates default-space seeding (app ↔ conftest)</li>
+            <li>De-duplicates prompt-context assembly (3 sites → 1 module)</li>
+            <li>Makes the <code>UserConfig</code> endpoint from <code>TODO.md:4</code> a new blueprint, not the 25th route</li>
+          </ul>
+        </article>
+
+        <!-- ============ CANDIDATE 4 ============ -->
+        <article id="c4" class="space-y-4">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-serif">4 · Finish the abandoned <code>space_id</code> migration</h2>
+            <div class="flex gap-2">
+              <span class="bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-1 rounded">Worth exploring</span>
+              <span class="bg-slate-100 text-slate-700 text-xs font-semibold px-2 py-1 rounded">mock</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded p-3">
+            src/models.py:13-14, 29-34 (declared deprecated, still dual-write)<br/>
+            src/app.py:84-97, 192-195 (input fallback to space_name)<br/>
+            src/scheduler.py:57 (reads task.space the deprecated string)<br/>
+            src/static/js/app.js:1129-1133 (frontend joins by task.space string)
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — declared, not completed</div>
+              <div class="h-56 relative">
+                <svg viewBox="0 0 320 220" class="w-full h-full">
+                  <rect x="20" y="20" width="120" height="40" fill="#f1f5f9" stroke="#94a3b8"/>
+                  <text x="80" y="45" text-anchor="middle" font-size="11" fill="#475569" font-family="monospace">Task.space (str)</text>
+                  <rect x="180" y="20" width="120" height="40" fill="#f1f5f9" stroke="#0f172a"/>
+                  <text x="240" y="45" text-anchor="middle" font-size="11" fill="#0f172a" font-family="monospace">Task.space_id (FK)</text>
+                  <line x1="80" y1="60" x2="80" y2="90" stroke="#dc2626" stroke-width="2"/>
+                  <line x1="240" y1="60" x2="240" y2="90" stroke="#475569" stroke-dasharray="4 4"/>
+                  <rect x="20" y="90" width="280" height="30" fill="#fff" stroke="#dc2626"/>
+                  <text x="160" y="110" text-anchor="middle" font-size="11" fill="#475569" font-family="monospace">scheduler.py:57  reads task.space</text>
+                  <rect x="20" y="130" width="280" height="30" fill="#fff" stroke="#dc2626"/>
+                  <text x="160" y="150" text-anchor="middle" font-size="11" fill="#475569" font-family="monospace">app.js:1129  groups tasks by .space</text>
+                  <rect x="20" y="170" width="280" height="30" fill="#fff" stroke="#dc2626"/>
+                  <text x="160" y="190" text-anchor="middle" font-size="11" fill="#475569" font-family="monospace">app.py:84-97  accepts both inputs</text>
+                </svg>
+              </div>
+              <div class="text-xs text-slate-600 mt-2">Rename a Space and the scheduler + frontend both break. No migrate.py exists.</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — one canonical relation + a denormalized echo</div>
+              <div class="h-56 relative">
+                <svg viewBox="0 0 320 220" class="w-full h-full">
+                  <rect x="20" y="20" width="280" height="40" fill="#0f172a" stroke="#0f172a"/>
+                  <text x="160" y="45" text-anchor="middle" font-size="11" fill="#f8fafc" font-family="monospace">Task.space_id (FK) — canonical</text>
+                  <line x1="160" y1="60" x2="160" y2="90" stroke="#475569" stroke-dasharray="4 4"/>
+                  <rect x="20" y="90" width="280" height="30" fill="#fff" stroke="#0f172a"/>
+                  <text x="160" y="110" text-anchor="middle" font-size="11" fill="#0f172a" font-family="monospace">scheduler keys by space_id</text>
+                  <rect x="20" y="130" width="280" height="30" fill="#fff" stroke="#0f172a"/>
+                  <text x="160" y="150" text-anchor="middle" font-size="11" fill="#0f172a" font-family="monospace">app.js joins by space_id</text>
+                  <rect x="20" y="170" width="280" height="30" fill="#f1f5f9" stroke="#94a3b8"/>
+                  <text x="160" y="190" text-anchor="middle" font-size="10" fill="#64748b" font-family="monospace">to_dict echoes space_name (denormalized)</text>
+                </svg>
+              </div>
+              <div class="text-xs text-slate-600 mt-2">Single source of truth. Renames are safe. <code>migrate.py</code> backfills <code>space_id</code> from old strings.</div>
+            </div>
+          </div>
+
+          <p class="text-sm"><strong>Problem.</strong> The migration was declared in the model comment but never completed in the read paths; scheduler and frontend both still join on the deprecated string.</p>
+          <p class="text-sm"><strong>Solution.</strong> Delete <code>Task.space</code> reads from <code>scheduler.py</code> and <code>app.js</code>, stop accepting <code>space_name</code> as input, ship the missing <code>migrate.py</code> that backfills <code>space_id</code>.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700">
+            <li><strong>locality:</strong> Space joins have one definition</li>
+            <li>Renames stop breaking the calendar silently</li>
+            <li>Delivers half of <code>doc/TODO.md:4</code> (the <code>migrate.py</code> half)</li>
+          </ul>
+          <div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+            Aligns with <code>doc/TODO.md:4</code>. Not independent of candidate 2 (the scheduler read is the same line); sequence them together.
+          </div>
+        </article>
+
+        <!-- ============ CANDIDATE 5 ============ -->
+        <article id="c5" class="space-y-4">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-serif">5 · Replace <code>to_dict</code> round-tripping with a typed contract</h2>
+            <div class="flex gap-2">
+              <span class="bg-slate-200 text-slate-800 text-xs font-semibold px-2 py-1 rounded">Speculative</span>
+              <span class="bg-slate-100 text-slate-700 text-xs font-semibold px-2 py-1 rounded">ports &amp; adapters</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded p-3">
+            src/models.py:28-51 (Task.to_dict — 12 columns hand-enumerated)<br/>
+            src/app.py:174-177 (single-vs-array return depends on LLM cardinality)<br/>
+            src/app.py:188-209 (update_task whitelist — per-field if-stanzas)<br/>
+            src/static/js/app.js + notes.js (consume fields by string key)
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — mass-equal: interface ≈ implementation</div>
+              <div class="flex items-end gap-8 justify-center h-48">
+                <div class="flex flex-col items-center">
+                  <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">interface (to_dict)</div>
+                  <div class="w-12 h-40 bg-slate-300 border border-slate-500"></div>
+                </div>
+                <div class="text-2xl text-slate-400">≈</div>
+                <div class="flex flex-col items-center">
+                  <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">implementation</div>
+                  <div class="w-12 h-44 bg-slate-400 border border-slate-600"></div>
+                </div>
+              </div>
+              <div class="text-xs text-slate-600 mt-2">Shallow. Frontend consumes by string; new fields vanish silently in <code>update_task</code>'s if-stanza whitelist.</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — small typed DTO, deep serializer</div>
+              <div class="flex items-end gap-8 justify-center h-48">
+                <div class="flex flex-col items-center">
+                  <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">interface (TaskDTO)</div>
+                  <div class="w-12 h-12 bg-slate-700 border-2 border-slate-900"></div>
+                </div>
+                <div class="text-2xl text-slate-400">→</div>
+                <div class="flex flex-col items-center">
+                  <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">implementation</div>
+                  <div class="w-12 h-40 bg-slate-900 border-2 border-slate-900"></div>
+                </div>
+              </div>
+              <div class="text-xs text-slate-600 mt-2">Deep. One per-endpoint DTO; validation, defaults, projection live behind it. JS gets a documented contract.</div>
+            </div>
+          </div>
+
+          <p class="text-sm"><strong>Problem.</strong> The frontend/backend contract is "whatever <code>to_dict()</code> returns"; new fields disappear in <code>update_task</code>'s hand-maintained if-stanza whitelist and the single-vs-array branch means the API shape literally depends on LLM output cardinality.</p>
+          <p class="text-sm"><strong>Solution.</strong> Introduce a thin DTO layer (Pydantic / marshmallow / hand-rolled schematic) per endpoint: one explicit shape in, one explicit shape out. <code>to_dict</code> becomes the DTO's serializer; <code>update_task</code>'s whitelist becomes schema-driven validation.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700">
+            <li><strong>depth:</strong> interface shrinks, implementation absorbs the wrappers</li>
+            <li><strong>leverage:</strong> JS clients consume a contract, not an accident</li>
+            <li>Validation lives in one place — kills the 422-vs-400 uncertainty</li>
+            <li>Unblocks <code>TODO.md:8</code> (advanced task creator) with richer payloads</li>
+          </ul>
+          <div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+            Largest blast radius of the five. Conflicts with the permissive single-vs-array return shape at <code>app.py:174-177</code> — sequence after candidates 1–3.
+          </div>
+        </article>
+
+      </section>
+
+      <!-- ============ TOP RECOMMENDATION ============ -->
+      <section id="top-recommendation" class="border-t-2 border-slate-300 pt-8">
+        <h2 class="text-2xl font-serif mb-3">Top recommendation</h2>
+        <div class="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-6">
+          <div class="flex items-baseline justify-between flex-wrap gap-2">
+            <h3 class="text-xl font-serif">
+              Start with candidate 2 ·
+              <a href="#c2" class="text-emerald-700 underline decoration-dotted">Deepen <code>schedule_tasks</code> off the ORM</a>
+            </h3>
+            <span class="text-xs uppercase tracking-wider text-emerald-700">unblocks the most</span>
+          </div>
+          <p class="text-sm mt-3">
+            It's the deepest single deepening because <code>schedule_tasks</code> is the project's core domain algorithm and currently has <strong>zero tests</strong> — the leaky seam forecloses the test that the open "not all tasks planned" bug (<code>doc/TODO.md:27</code>) needs. Picking it forces the <code>SchedulableTask</code> adapter, which in turn lets you finish the space_id migration (candidate 4) and unblocks the <strong>default work times</strong> feature from <code>doc/TODO.md:4</code> (the scheduler finally has a clean seam to read UserConfig from).
+          </p>
+          <p class="text-sm mt-3">
+            <strong>Suggested sequence:</strong> 2 &amp; 4 together → 1 (audit seam) → 3 (blueprint split) → 5 (typed DTOs). Each one unlocks the next; 1–3 are prerequisites for the <code>TODO.md:4</code> UserConfig work cleanly landing.
+          </p>
+        </div>
+      </section>
+
+      <footer class="text-xs text-slate-400 border-t border-slate-200 pt-4">
+        Architecture review · generated by the <code>improve-codebase-architecture</code> skill · uses glossary from <code>codebase-design</code> · no ADRs exist in this repo
+      </footer>
+
+    </main>
+  </body>
+</html>
