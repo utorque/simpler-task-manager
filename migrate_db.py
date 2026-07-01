@@ -223,6 +223,13 @@ DATA_FIXUPS = [
            AND EXISTS (SELECT 1 FROM spaces WHERE spaces.name = tasks.space)
         """,
     ),
+    (
+        "backfill tasks.status from the legacy completed flag",
+        # The status column lands with DEFAULT 'todo'; completed rows become
+        # 'done'. Also repairs any completed/status drift, which the app
+        # invariant (completed ⇔ status='done') makes a no-op normally.
+        "UPDATE tasks SET status = 'done' WHERE completed = 1 AND status <> 'done'",
+    ),
 ]
 
 

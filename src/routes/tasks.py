@@ -8,7 +8,7 @@ from ai_parser import parse_task_with_ai
 from audit import record_change
 from auth import login_required
 from datetime_utils import parse_iso_datetime
-from models import db, Task
+from models import db, Task, TASK_STATUSES
 from prompt_context import build_task_parse_prompt
 
 tasks_bp = Blueprint('tasks', __name__)
@@ -32,6 +32,10 @@ def get_tasks():
 def create_task():
     data = request.json
 
+    status = data.get('status', 'todo')
+    if status not in TASK_STATUSES:
+        return jsonify({'error': f"invalid status {status!r}, expected one of {list(TASK_STATUSES)}"}), 400
+
     task = Task(
         title=data['title'],
         description=data.get('description'),
@@ -40,6 +44,7 @@ def create_task():
         deadline=parse_iso_datetime(data.get('deadline')),
         estimated_duration=data.get('estimated_duration', 60)
     )
+    task.apply_status(status)
 
     db.session.add(task)
     db.session.flush()
@@ -112,8 +117,14 @@ def update_task(task_id):
         task.scheduled_start = parse_iso_datetime(data.get('scheduled_start'))
     if 'scheduled_end' in data:
         task.scheduled_end = parse_iso_datetime(data.get('scheduled_end'))
-    if 'completed' in data:
-        task.completed = data['completed']
+    # status is the single source of truth for done-ness; when both are sent,
+    # status wins. Setting `completed` alone (legacy callers) derives status.
+    if 'status' in data:
+        if data['status'] not in TASK_STATUSES:
+            return jsonify({'error': f"invalid status {data['status']!r}, expected one of {list(TASK_STATUSES)}"}), 400
+        task.apply_status(data['status'])
+    elif 'completed' in data:
+        task.apply_completed(data['completed'])
     if 'frozen' in data:
         task.frozen = data['frozen']
 
