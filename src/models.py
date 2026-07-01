@@ -10,7 +10,10 @@ class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(500), nullable=False)
     description = db.Column(db.Text)
-    space = db.Column(db.String(100))  # DEPRECATED: kept for backward compatibility, use space_id instead
+    # LEGACY: no code reads or writes this column anymore (space_id is the
+    # canonical relation). The column stays in the schema because migrate_db.py
+    # is additive-only; its data is backfilled into space_id by a data fixup.
+    space = db.Column(db.String(100))
     space_id = db.Column(db.Integer, db.ForeignKey('spaces.id'))  # Reference to Space table
     priority = db.Column(db.Integer, default=0)  # Higher number = higher priority
     deadline = db.Column(db.DateTime)
@@ -26,12 +29,8 @@ class Task(db.Model):
     space_rel = db.relationship('Space', backref='tasks', foreign_keys=[space_id])
 
     def to_dict(self):
-        # Determine space name - use space_rel if available, fallback to old space field
-        space_name = None
-        if self.space_rel:
-            space_name = self.space_rel.name
-        elif self.space:
-            space_name = self.space
+        # space_id is canonical; 'space' is a denormalized name echo for the UI.
+        space_name = self.space_rel.name if self.space_rel else None
 
         return {
             'id': self.id,
@@ -82,11 +81,12 @@ class ChangeLog(db.Model):
     __tablename__ = 'change_logs'
 
     id = db.Column(db.Integer, primary_key=True)
-    action = db.Column(db.String(100), nullable=False)  # create, update, delete, reorder, reschedule
-    entity_type = db.Column(db.String(50), nullable=False)  # task, space
+    action = db.Column(db.String(100), nullable=False)  # create, update, delete, reorder, freeze, unfreeze
+    entity_type = db.Column(db.String(50), nullable=False)  # task, space, note, mailbox
     entity_id = db.Column(db.Integer)
     old_value = db.Column(db.Text)  # JSON string
     new_value = db.Column(db.Text)  # JSON string
+    actor = db.Column(db.String(50), default='user')  # 'user' or 'ai'
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -97,6 +97,7 @@ class ChangeLog(db.Model):
             'entity_id': self.entity_id,
             'old_value': json.loads(self.old_value) if self.old_value else None,
             'new_value': json.loads(self.new_value) if self.new_value else None,
+            'actor': self.actor,
             'timestamp': self.timestamp.isoformat()
         }
 

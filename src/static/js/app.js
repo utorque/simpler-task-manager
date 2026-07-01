@@ -492,7 +492,7 @@ function editTask(taskId) {
     document.getElementById('editTaskId').value = task.id;
     document.getElementById('editTitle').value = task.title;
     document.getElementById('editDescription').value = task.description || '';
-    document.getElementById('editSpace').value = task.space || '';
+    document.getElementById('editSpace').value = task.space_id != null ? String(task.space_id) : '';
     document.getElementById('editPriority').value = task.priority;
     document.getElementById('editDuration').value = task.estimated_duration || 60;
     document.getElementById('editCompleted').checked = task.completed;
@@ -513,7 +513,7 @@ async function saveTask() {
     const data = {
         title: document.getElementById('editTitle').value,
         description: document.getElementById('editDescription').value,
-        space: document.getElementById('editSpace').value,
+        space_id: document.getElementById('editSpace').value ? parseInt(document.getElementById('editSpace').value) : null,
         priority: parseInt(document.getElementById('editPriority').value),
         estimated_duration: parseInt(document.getElementById('editDuration').value),
         completed: document.getElementById('editCompleted').checked,
@@ -638,11 +638,11 @@ async function loadSpaces() {
     updateSpaceSelects();
 }
 
-// Update space selects
+// Update space selects (value = space id; space_id is the canonical relation)
 function updateSpaceSelects() {
     const select = document.getElementById('editSpace');
     select.innerHTML = '<option value="">None</option>' +
-        spaces.map(space => `<option value="${escapeHtml(space.name)}">${escapeHtml(space.name)}</option>`).join('');
+        spaces.map(space => `<option value="${space.id}">${escapeHtml(space.name)}</option>`).join('');
 }
 
 // Show space modal

@@ -52,39 +52,8 @@ from app import app as flask_app, db  # noqa: E402  (import after config redirec
 from ai_parser import AIProvider, parse_task_with_ai, get_ai_provider  # noqa: E402
 import ai_parser  # noqa: E402  (module handle for monkeypatching)
 from models import Space, Note  # noqa: E402
-
-DEFAULT_SPACES = [
-    {
-        "name": "work",
-        "description": "Work-related tasks, meetings, and projects during office hours",
-        "constraints": [
-            {"day": 1, "start": "09:00", "end": "17:00"},
-            {"day": 2, "start": "09:00", "end": "17:00"},
-            {"day": 3, "start": "09:00", "end": "17:00"},
-            {"day": 4, "start": "09:00", "end": "17:00"},
-            {"day": 5, "start": "09:00", "end": "17:00"},
-        ],
-    },
-    {
-        "name": "study",
-        "description": "Learning activities, courses, homework, and educational tasks",
-        "constraints": [],
-    },
-    {
-        "name": "association",
-        "description": "Community group, club, or volunteer organization activities",
-        "constraints": [{"day": 3, "start": "18:00", "end": "22:00"}],
-    },
-]
-
-
-def _seed_default_spaces():
-    if Space.query.count() == 0:
-        for sp in DEFAULT_SPACES:
-            s = Space(name=sp["name"], description=sp["description"])
-            s.set_time_constraints(sp["constraints"])
-            db.session.add(s)
-        db.session.commit()
+# Seeding is shared with the app factory (src/seeding.py) — no duplication.
+from seeding import DEFAULT_SPACES, seed_default_spaces as _seed_default_spaces  # noqa: E402
 
 
 class StubAIProvider(AIProvider):
