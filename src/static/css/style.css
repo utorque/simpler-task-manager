@@ -1042,6 +1042,135 @@ body {
 
 .notes-editor-panel #noteTitle { max-width: 60%; }
 
+/* ===== Mail destination layout ===== */
+
+.mail-layout {
+    display: flex;
+    gap: 16px;
+    height: 100%;
+}
+
+.mail-sidebar {
+    width: 320px;
+    flex-shrink: 0;
+    background: white;
+    border: 2px solid #e0e6ed;
+    border-radius: 12px;
+    padding: 14px;
+    overflow-y: auto;
+}
+
+.mail-main {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+}
+
+.mailbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 2px solid transparent;
+}
+
+.mailbox-row:hover {
+    background: #f7fafc;
+}
+
+.mailbox-row.active {
+    border-color: #667eea;
+    background: #f0f3ff;
+}
+
+.mailbox-row-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.mailbox-row-label {
+    font-weight: 600;
+    color: #2d3748;
+}
+
+.mailbox-row-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 12px;
+    color: #718096;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mailbox-row-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.mail-message-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: white;
+    border: 1px solid #e0e6ed;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+}
+
+.mail-message-row.unread .mail-message-subject {
+    font-weight: 700;
+}
+
+.mail-message-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.mail-message-subject {
+    color: #2d3748;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mail-message-snippet {
+    font-size: 12px;
+    color: #718096;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mail-message-side {
+    text-align: right;
+    font-size: 12px;
+    color: #718096;
+    flex-shrink: 0;
+    max-width: 220px;
+    overflow: hidden;
+}
+
+.mail-message-from {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mail-message-date {
+    white-space: nowrap;
+}
+
+.mail-add-task {
+    flex-shrink: 0;
+}
+
 /* Shortcuts help modal */
 .shortcuts-table td:first-child {
     white-space: nowrap;
@@ -1059,8 +1188,8 @@ body {
 @media (max-width: 992px) {
     .app-brand-name { display: none; }
     .nav-tab kbd { display: none; }
-    .calendar-layout, .notes-layout { flex-direction: column; }
-    .calendar-sidebar, .notes-list-panel { width: 100%; max-height: 40vh; }
+    .calendar-layout, .notes-layout, .mail-layout { flex-direction: column; }
+    .calendar-sidebar, .notes-list-panel, .mail-sidebar { width: 100%; max-height: 40vh; }
     .board { flex-wrap: wrap; height: auto; }
     .board-col { min-width: 45%; }
 }

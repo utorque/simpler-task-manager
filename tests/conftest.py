@@ -82,7 +82,9 @@ class StubAIProvider(AIProvider):
         super().__init__(api_key=api_key, base_url=base_url, model=model)
 
     def parse_task(self, text, system_prompt):
-        return list(self.PARSED_TASKS_CANNED)
+        # Fresh dicts per call: routes tag drafts in place (space_id), and a
+        # real provider never returns shared state across calls.
+        return [dict(task) for task in self.PARSED_TASKS_CANNED]
 
     def cleanify(self, note_text, system_prompt):
         return self.CLEANIFIED_CANNED

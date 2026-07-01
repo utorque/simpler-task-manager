@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Destination: deep link (#tasks/#calendar/#notes) > last used > Tasks
     const fromHash = window.location.hash.replace('#', '');
-    const initial = ['tasks', 'calendar', 'notes'].includes(fromHash)
+    const initial = ['tasks', 'calendar', 'notes', 'mail'].includes(fromHash)
         ? fromHash
         : (localStorage.getItem('destination') || 'tasks');
     switchDestination(initial);

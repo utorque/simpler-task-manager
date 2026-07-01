@@ -26,6 +26,9 @@
             <button class="nav-tab" data-destination="notes" title="Notes — press 3">
                 <i class="fas fa-sticky-note"></i> Notes <kbd>3</kbd>
             </button>
+            <button class="nav-tab" data-destination="mail" title="Mail — press 4">
+                <i class="fas fa-envelope"></i> Mail <kbd>4</kbd>
+            </button>
         </nav>
         <!-- Global quick capture: reachable from every view, zero clicks -->
         <div class="quick-capture">
@@ -237,7 +240,86 @@
                 </div>
             </div>
         </section>
+        <!-- ===== Mail destination ===== -->
+        <section id="view-mail" class="app-view" style="display: none;">
+            <div class="mail-layout">
+                <aside class="mail-sidebar">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 text-muted">Mailboxes</h6>
+                        <button class="btn btn-sm btn-success" id="addMailboxBtn" title="Add mailbox">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div id="mailboxList"></div>
+                </aside>
+                <div class="mail-main">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshMailBtn" title="Refresh inbox">
+                            <i class="fas fa-rotate"></i>
+                        </button>
+                        <span id="mailStatus" class="small text-muted"></span>
+                        <span class="small text-muted ms-auto">Right-click an email (or its <i class="fas fa-plus-square"></i> button) → task</span>
+                    </div>
+                    <div id="mailMessages"></div>
+                </div>
+            </div>
+        </section>
     </main>
+
+    <!-- Mailbox Add/Edit Modal -->
+    <div class="modal fade" id="mailboxModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="mailboxModalTitle">Add Mailbox</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="mailboxId">
+                    <div class="mb-3">
+                        <label class="form-label">Label</label>
+                        <input type="text" class="form-control" id="mailboxLabel" placeholder="Work inbox">
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label">IMAP host</label>
+                            <input type="text" class="form-control" id="mailboxHost" placeholder="imap.example.com">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">Port</label>
+                            <input type="number" class="form-control" id="mailboxPort" value="993">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Username</label>
+                        <input type="text" class="form-control" id="mailboxUsername" placeholder="you@example.com" autocomplete="off">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-control" id="mailboxPassword" autocomplete="new-password">
+                        <div class="form-text">Stored encrypted; never shown again. Use an app password if your provider supports them.</div>
+                    </div>
+                    <div class="row g-2 mb-3 align-items-end">
+                        <div class="col">
+                            <label class="form-label">Linked space</label>
+                            <select class="form-select" id="mailboxSpace"></select>
+                            <div class="form-text">Tasks created from this inbox land in this space.</div>
+                        </div>
+                        <div class="col-auto">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="mailboxSsl" checked>
+                                <label class="form-check-label" for="mailboxSsl">SSL</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveMailboxBtn">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Task Edit Modal -->
     <div class="modal fade" id="taskModal" tabindex="-1">
@@ -415,7 +497,7 @@
                     <h6 class="text-muted">Everywhere</h6>
                     <table class="table table-sm shortcuts-table">
                         <tbody>
-                            <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd></td><td>Switch to Tasks / Calendar / Notes</td></tr>
+                            <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd></td><td>Switch to Tasks / Calendar / Notes / Mail</td></tr>
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
                             <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Create task with AI (in any capture input)</td></tr>
                             <tr><td><kbd>S</kbd></td><td>Auto-schedule all tasks</td></tr>
@@ -449,6 +531,12 @@
                             <tr><td><i class="fas fa-broom"></i></td><td>Cleanify the note (AI tidy, with Undo)</td></tr>
                         </tbody>
                     </table>
+                    <h6 class="text-muted">Mail</h6>
+                    <table class="table table-sm shortcuts-table">
+                        <tbody>
+                            <tr><td>Right-click an email</td><td>Draft a task from it (AI), confirm before saving</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -458,7 +546,9 @@
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+    <script src="/static/js/task_draft_modal.js"></script>
     <script src="/static/js/notes.js"></script>
+    <script src="/static/js/mail.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

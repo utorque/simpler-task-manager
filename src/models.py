@@ -149,6 +149,45 @@ class Note(db.Model):
         }
 
 
+class Mailbox(db.Model):
+    """A registered IMAP mailbox, linked to a Space.
+
+    No inbox contents are persisted — messages are fetched live via IMAP on
+    each open (mirrors the live-ICS pattern of CalendarSource). The account
+    password is encrypted at rest (see crypto_utils); it is NEVER returned by
+    any API — to_dict only exposes has_password.
+    """
+    __tablename__ = 'mailboxes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(100), nullable=False)
+    host = db.Column(db.String(255), nullable=False)
+    port = db.Column(db.Integer, default=993)
+    username = db.Column(db.String(255), nullable=False)
+    password_encrypted = db.Column(db.Text, nullable=False)
+    use_ssl = db.Column(db.Boolean, default=True)  # False = plain IMAP + STARTTLS
+    space_id = db.Column(db.Integer, db.ForeignKey('spaces.id'))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    space_rel = db.relationship('Space', backref='mailboxes', foreign_keys=[space_id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'label': self.label,
+            'host': self.host,
+            'port': self.port,
+            'username': self.username,
+            'has_password': bool(self.password_encrypted),
+            'use_ssl': self.use_ssl,
+            'space_id': self.space_id,
+            'space': self.space_rel.name if self.space_rel else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class CalendarSource(db.Model):
     __tablename__ = 'calendar_sources'
 

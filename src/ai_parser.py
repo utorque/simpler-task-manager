@@ -283,6 +283,32 @@ def parse_task_with_ai(text: str, system_prompt: str) -> List[Dict[str, Any]]:
     return provider.parse_task(text, system_prompt)
 
 
+def email_to_task_with_ai(subject: str, body: str, system_prompt: str) -> List[Dict[str, Any]]:
+    """
+    Derive task draft(s) from an email via AI. Reuses the `parse_task` seam
+    (same deliberate choice as promote-to-task: no new AI code path) with the
+    dedicated email-to-task system prompt.
+
+    Graceful degradation: on any exception or empty response, returns a single
+    trivial draft (title = subject, description = first 500 chars of body).
+    """
+    text = f"Subject: {subject}\n\n{body or ''}"
+    try:
+        drafts = get_ai_provider().parse_task(text, system_prompt)
+        if drafts:
+            return drafts
+    except Exception:
+        pass
+    return [{
+        'title': (subject or 'Email task')[:500],
+        'description': (body or '')[:500],
+        'space_id': None,
+        'priority': 5,
+        'deadline': None,
+        'estimated_duration': 60,
+    }]
+
+
 def cleanify_note_with_ai(note_text: str, system_prompt: str) -> str:
     """
     Tidy a note's markdown text via AI. Returns cleaned text on success.
