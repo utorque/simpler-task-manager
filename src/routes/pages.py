@@ -14,9 +14,10 @@ def index():
 
 @pages_bp.route('/notes')
 def notes_page():
+    # The workspace is one unified shell; /notes deep-links into its Notes view.
     if not session.get('authenticated'):
         return redirect(url_for('pages.login'))
-    return render_template('notes.html')
+    return redirect('/#notes')
 
 
 @pages_bp.route('/login', methods=['GET', 'POST'])

@@ -1,3 +1,8 @@
+// ===== Unified ADHD-friendly workspace shell =====
+// One header, four destinations (Tasks / Calendar / Notes [/ Mail]), one
+// global quick-capture input. Tasks = kanban board (home) + grouped-by-space
+// overview (secondary). Calendar behavior is preserved as-is.
+
 // Global state
 let tasks = [];
 let spaces = [];
@@ -6,9 +11,23 @@ let taskModal;
 let spaceModal;
 let calendarModal;
 let addTaskModal;
+let helpModal;
 let sortable;
 let showCompletedTasks = false;
 let focusedSpace = localStorage.getItem('focusedSpace') || null;
+let currentDestination = null;
+let tasksSubview = localStorage.getItem('tasksSubview') || 'board';
+let boardSpaceFilter = parseStoredSpaceFilter();
+
+const TASK_STATUSES = ['todo', 'doing', 'blocked', 'done'];
+const DONE_COLUMN_LIMIT = 30;
+
+function parseStoredSpaceFilter() {
+    const raw = localStorage.getItem('boardSpaceFilter');
+    if (raw === null || raw === 'all') return null;
+    const n = parseInt(raw);
+    return Number.isNaN(n) ? null : n;
+}
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', async function() {
@@ -17,18 +36,31 @@ document.addEventListener('DOMContentLoaded', async function() {
     spaceModal = new bootstrap.Modal(document.getElementById('spaceModal'));
     calendarModal = new bootstrap.Modal(document.getElementById('calendarModal'));
     addTaskModal = new bootstrap.Modal(document.getElementById('addTaskModal'));
+    helpModal = new bootstrap.Modal(document.getElementById('helpModal'));
 
     // Initialize calendar
     initCalendar();
 
-    // Initialize sortable task list
+    // Initialize sortables (calendar sidebar list + kanban columns)
     initSortable();
+    initBoardSortables();
+    initBoardInlineAdd();
 
     // Load initial data
     await Promise.all([loadTasks(), loadSpaces()]);
 
-    // Set Overview as default view
-    switchView('overview');
+    // Destination: deep link (#tasks/#calendar/#notes) > last used > Tasks
+    const fromHash = window.location.hash.replace('#', '');
+    const initial = ['tasks', 'calendar', 'notes'].includes(fromHash)
+        ? fromHash
+        : (localStorage.getItem('destination') || 'tasks');
+    switchDestination(initial);
+    switchTasksSubview(tasksSubview);
+
+    // Top-nav wiring
+    document.querySelectorAll('#appNav .nav-tab').forEach(btn => {
+        btn.addEventListener('click', () => switchDestination(btn.dataset.destination));
+    });
 
     // Event listeners
     document.getElementById('parseTaskBtn').addEventListener('click', parseTask);
@@ -36,33 +68,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('logoutBtn').addEventListener('click', logout);
     document.getElementById('addSpaceBtn').addEventListener('click', showSpaceModal);
     document.getElementById('addCalendarBtn').addEventListener('click', showCalendarModal);
+    document.getElementById('helpBtn').addEventListener('click', () => helpModal.show());
     document.getElementById('saveTaskBtn').addEventListener('click', saveTask);
     document.getElementById('deleteTaskBtn').addEventListener('click', deleteTask);
     document.getElementById('saveCalendarBtn').addEventListener('click', saveCalendar);
     document.getElementById('createTaskFromModalBtn').addEventListener('click', createTaskFromModal);
 
-    // Event delegation for task list (more efficient than attaching to each item)
-    document.getElementById('taskList').addEventListener('click', (e) => {
-        const taskItem = e.target.closest('.task-item');
-        if (taskItem) {
-            const taskId = parseInt(taskItem.dataset.taskId);
-            const isCtrl = e.ctrlKey || e.metaKey;
+    // Task interactions share one convention everywhere:
+    // click = edit, Ctrl+click = done, Shift+click = freeze.
+    wireTaskClickDelegation('taskList', '.task-item');
+    wireTaskClickDelegation('spaceCardsContainer', '.space-task-item');
+    wireTaskClickDelegation('boardView', '.board-card');
 
-            if (isCtrl) {
-                // Ctrl: Mark as done/undone
-                e.preventDefault();
-                toggleTaskCompletion(taskId);
-            } else {
-                // Normal click: Edit task
-                editTask(taskId);
-            }
-        }
-    });
-
-    // Allow Enter key in task input to submit
-    document.getElementById('taskInput').addEventListener('keydown', function(e) {
+    // Ctrl+Enter submits the quick capture
+    document.getElementById('quickCapture').addEventListener('keydown', function(e) {
         if (e.ctrlKey && e.key === 'Enter') {
             parseTask();
+        } else if (e.key === 'Escape') {
+            this.blur();
         }
     });
 
@@ -73,29 +96,284 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     });
 
-    // Event delegation for overview space task items
-    document.getElementById('spaceCardsContainer').addEventListener('click', (e) => {
-        const taskItem = e.target.closest('.space-task-item');
-        if (taskItem) {
-            const taskId = parseInt(taskItem.dataset.taskId);
-            const isCtrl = e.ctrlKey || e.metaKey;
-
-            if (isCtrl) {
-                // Ctrl: Mark as done/undone
-                e.preventDefault();
-                toggleTaskCompletion(taskId);
-            } else {
-                // Normal click: Edit task
-                editTask(taskId);
-            }
-        }
-    });
-
     // Auto-focus on add task modal when shown
     document.getElementById('addTaskModal').addEventListener('shown.bs.modal', function() {
         document.getElementById('addTaskInput').focus();
     });
+
+    initKeyboardShortcuts();
 });
+
+// ===== Destination switching (one header, N views) =====
+
+function switchDestination(destination) {
+    if (currentDestination === destination) return;
+    currentDestination = destination;
+
+    document.querySelectorAll('.app-view').forEach(v => v.style.display = 'none');
+    const view = document.getElementById(`view-${destination}`);
+    if (view) view.style.display = 'block';
+
+    document.querySelectorAll('#appNav .nav-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.destination === destination);
+    });
+
+    localStorage.setItem('destination', destination);
+    history.replaceState(null, '', `#${destination}`);
+
+    if (destination === 'calendar' && calendar) {
+        // FullCalendar sizes wrong when rendered while hidden.
+        calendar.updateSize();
+    }
+    if (destination === 'tasks') {
+        renderTasksView();
+    }
+    if (destination === 'notes' && window.NotesView) {
+        window.NotesView.enter();
+    }
+    if (destination === 'mail' && window.MailView) {
+        window.MailView.enter();
+    }
+}
+
+// Board <-> Overview toggle inside the Tasks destination (persisted)
+function switchTasksSubview(subview) {
+    tasksSubview = subview;
+    localStorage.setItem('tasksSubview', subview);
+
+    document.getElementById('boardView').style.display = subview === 'board' ? 'flex' : 'none';
+    document.getElementById('overviewView').style.display = subview === 'overview' ? 'block' : 'none';
+    document.getElementById('boardTab').classList.toggle('active', subview === 'board');
+    document.getElementById('overviewTab').classList.toggle('active', subview === 'overview');
+
+    renderTasksView();
+}
+
+function renderTasksView() {
+    renderSpaceChips();
+    if (tasksSubview === 'overview') {
+        renderOverview();
+    } else {
+        renderBoard();
+    }
+}
+
+// ===== Keyboard shortcuts =====
+
+function isTypingContext(el) {
+    if (!el) return false;
+    return el.isContentEditable ||
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) ||
+        (el.closest && el.closest('.CodeMirror'));
+}
+
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (isTypingContext(e.target)) return;
+        if (document.querySelector('.modal.show')) return;
+
+        switch (e.key) {
+            case '1': switchDestination('tasks'); break;
+            case '2': switchDestination('calendar'); break;
+            case '3': switchDestination('notes'); break;
+            case '4': if (document.getElementById('view-mail')) switchDestination('mail'); break;
+            case '/':
+                e.preventDefault();
+                document.getElementById('quickCapture').focus();
+                break;
+            case 's':
+            case 'S':
+                autoSchedule();
+                break;
+            case '?':
+                helpModal.show();
+                break;
+        }
+    });
+}
+
+// Shared click convention for every task representation.
+function wireTaskClickDelegation(containerId, selector) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.addEventListener('click', (e) => {
+        const item = e.target.closest(selector);
+        if (!item) return;
+        const taskId = parseInt(item.dataset.taskId);
+        if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            toggleTaskCompletion(taskId);
+        } else if (e.shiftKey) {
+            e.preventDefault();
+            toggleTaskFreeze(taskId);
+        } else {
+            editTask(taskId);
+        }
+    });
+}
+
+// ===== Kanban board =====
+
+function initBoardSortables() {
+    document.querySelectorAll('.board-col-cards').forEach(col => {
+        new Sortable(col, {
+            group: 'board',
+            animation: 150,
+            sort: false, // intra-column order = priority/deadline (PrePRD: dedicated ordinal deferred)
+            ghostClass: 'dragging',
+            onEnd: handleBoardDrop
+        });
+    });
+}
+
+async function handleBoardDrop(evt) {
+    const newStatus = evt.to.dataset.status;
+    const oldStatus = evt.from.dataset.status;
+    if (newStatus === oldStatus) return;
+
+    const taskId = parseInt(evt.item.dataset.taskId);
+    const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+    });
+
+    if (!response.ok) {
+        showAlert('Error moving task', 'danger');
+    }
+    await loadTasks();
+    calendar.refetchEvents();
+}
+
+function initBoardInlineAdd() {
+    // "+" in a column header opens an inline input: Enter creates the task
+    // directly in that column (and in the filtered space), Esc closes.
+    document.querySelectorAll('.board-col-add').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const form = document.querySelector(`.board-inline-add[data-status="${btn.dataset.status}"]`);
+            form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            if (form.style.display === 'block') form.querySelector('input').focus();
+        });
+    });
+
+    document.querySelectorAll('.board-inline-add input').forEach(input => {
+        input.addEventListener('keydown', async (e) => {
+            const form = input.closest('.board-inline-add');
+            if (e.key === 'Escape') {
+                input.value = '';
+                form.style.display = 'none';
+                return;
+            }
+            if (e.key !== 'Enter') return;
+            const title = input.value.trim();
+            if (!title) return;
+
+            const response = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title,
+                    status: form.dataset.status,
+                    space_id: boardSpaceFilter
+                })
+            });
+            if (response.ok) {
+                input.value = ''; // stays open for rapid entry
+                await loadTasks();
+            } else {
+                showAlert('Error creating task', 'danger');
+            }
+        });
+    });
+}
+
+function renderSpaceChips() {
+    const container = document.getElementById('spaceChips');
+    if (!container) return;
+
+    const chip = (label, value, active) => `
+        <button class="space-chip ${active ? 'active' : ''}" data-space-id="${value === null ? 'all' : value}">
+            ${label}
+        </button>`;
+
+    container.innerHTML =
+        chip('All spaces', null, boardSpaceFilter === null) +
+        spaces.map(s => chip(escapeHtml(s.name), s.id, boardSpaceFilter === s.id)).join('');
+
+    container.querySelectorAll('.space-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const v = btn.dataset.spaceId;
+            boardSpaceFilter = v === 'all' ? null : parseInt(v);
+            localStorage.setItem('boardSpaceFilter', v);
+            renderTasksView();
+        });
+    });
+}
+
+function boardFilteredTasks() {
+    if (boardSpaceFilter === null) return tasks;
+    return tasks.filter(t => t.space_id === boardSpaceFilter);
+}
+
+function renderBoard() {
+    const filtered = boardFilteredTasks();
+    const byStatus = { todo: [], doing: [], blocked: [], done: [] };
+    filtered.forEach(t => {
+        const status = TASK_STATUSES.includes(t.status) ? t.status : 'todo';
+        byStatus[status].push(t);
+    });
+
+    // Active columns: priority desc, then deadline, then creation.
+    ['todo', 'doing', 'blocked'].forEach(status => {
+        byStatus[status].sort((a, b) =>
+            (b.priority - a.priority) ||
+            ((a.deadline ? new Date(a.deadline) : Infinity) - (b.deadline ? new Date(b.deadline) : Infinity)) ||
+            (new Date(a.created_at) - new Date(b.created_at))
+        );
+    });
+    // Done: most recently touched first, capped to keep the column scannable.
+    byStatus.done.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    const doneOverflow = Math.max(0, byStatus.done.length - DONE_COLUMN_LIMIT);
+    byStatus.done = byStatus.done.slice(0, DONE_COLUMN_LIMIT);
+
+    TASK_STATUSES.forEach(status => {
+        const col = document.getElementById(`col-${status}`);
+        const count = document.getElementById(`count-${status}`);
+        count.textContent = byStatus[status].length + (status === 'done' && doneOverflow ? `+` : '');
+        col.innerHTML = byStatus[status].map(renderBoardCard).join('') ||
+            `<div class="board-empty">·</div>`;
+        if (status === 'done' && doneOverflow) {
+            col.innerHTML += `<div class="board-done-overflow">+${doneOverflow} older done task${doneOverflow > 1 ? 's' : ''}</div>`;
+        }
+    });
+}
+
+function renderBoardCard(task) {
+    const priorityClass = task.priority >= 7 ? 'priority-high' :
+                         task.priority >= 4 ? 'priority-medium' : 'priority-low';
+    const deadline = task.deadline ? new Date(task.deadline) : null;
+    const deadlineStr = deadline ? formatDeadline(deadline) : '';
+    const isSoon = deadline && (deadline - new Date()) < 24 * 60 * 60 * 1000;
+
+    return `
+        <div class="board-card ${priorityClass} ${task.completed ? 'completed' : ''} ${task.frozen ? 'frozen' : ''}"
+             data-task-id="${task.id}">
+            <div class="board-card-top">
+                <div class="board-card-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title)}</div>
+                <div class="board-card-priority ${priorityClass}">${task.priority}</div>
+            </div>
+            <div class="board-card-meta">
+                ${task.space ? `<span class="task-space">${escapeHtml(task.space)}</span>` : ''}
+                ${deadlineStr ? `<span class="task-deadline ${isSoon ? 'soon' : ''}"><i class="fas fa-calendar-times"></i> ${deadlineStr}</span>` : ''}
+                ${task.estimated_duration ? `<span><i class="fas fa-clock"></i> ${task.estimated_duration}min</span>` : ''}
+                ${task.scheduled_start ? `<span title="Scheduled"><i class="fas fa-calendar-check"></i></span>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+// ===== Calendar (preserved as-is) =====
 
 // Initialize FullCalendar
 function initCalendar() {
@@ -166,15 +444,23 @@ function initSortable() {
     });
 }
 
-// Load tasks
+// Load tasks. Always fetch everything; each view filters client-side
+// (the board needs the done column even when the calendar hides completed).
 async function loadTasks() {
-    const url = showCompletedTasks ? '/api/tasks?include_completed=true' : '/api/tasks';
-    const response = await fetch(url);
+    const response = await fetch('/api/tasks?include_completed=true');
     tasks = await response.json();
-    renderTasks();
+    renderAll();
 }
 
-// Toggle show completed tasks
+// Re-render every task representation that is currently visible.
+function renderAll() {
+    renderTasks();
+    if (currentDestination === 'tasks' || currentDestination === null) {
+        renderTasksView();
+    }
+}
+
+// Toggle show completed tasks (calendar sidebar + calendar events)
 function toggleShowCompleted() {
     showCompletedTasks = !showCompletedTasks;
     const btn = document.getElementById('toggleCompletedBtn');
@@ -182,15 +468,16 @@ function toggleShowCompleted() {
         ? '<i class="fas fa-eye-slash"></i>'
         : '<i class="fas fa-eye"></i>';
     btn.title = showCompletedTasks ? 'Hide completed tasks' : 'Show completed tasks';
-    loadTasks();
+    renderTasks();
     calendar.refetchEvents();
 }
 
-// Render tasks with optimized DOM updates
+// Render the calendar-sidebar task list with optimized DOM updates
 function renderTasks() {
     const taskList = document.getElementById('taskList');
+    const visibleTasks = showCompletedTasks ? tasks : tasks.filter(t => !t.completed);
 
-    if (tasks.length === 0) {
+    if (visibleTasks.length === 0) {
         taskList.innerHTML = `
             <div class="text-center text-muted py-5">
                 <i class="fas fa-clipboard-list fa-3x mb-3"></i>
@@ -203,7 +490,7 @@ function renderTasks() {
     // Use DocumentFragment for efficient DOM manipulation
     const fragment = document.createDocumentFragment();
 
-    tasks.forEach(task => {
+    visibleTasks.forEach(task => {
         const priorityClass = task.priority >= 7 ? 'priority-high' :
                              task.priority >= 4 ? 'priority-medium' : 'priority-low';
 
@@ -235,19 +522,20 @@ function renderTasks() {
     taskList.appendChild(fragment);
 }
 
-// Parse task with AI
+// Parse task with AI (global quick capture)
 async function parseTask() {
-    const input = document.getElementById('taskInput');
+    const input = document.getElementById('quickCapture');
     const text = input.value.trim();
 
     if (!text) {
         showAlert('Please enter a task description', 'warning');
+        input.focus();
         return;
     }
 
     const btn = document.getElementById('parseTaskBtn');
     const originalText = btn.innerHTML;
-    btn.innerHTML = '<span class="loading"></span> Creating...';
+    btn.innerHTML = '<span class="loading"></span>';
     btn.disabled = true;
 
     // Prepare request body with optional space hint
@@ -272,11 +560,6 @@ async function parseTask() {
 
         // Clear the selected space
         window.selectedSpaceForNewTask = null;
-
-        // Update overview if we're on that view
-        if (document.getElementById('overviewView').style.display !== 'none') {
-            renderOverview();
-        }
     } else {
         const error = await response.json();
         showAlert(error.error || 'Error creating task', 'danger');
@@ -290,7 +573,7 @@ async function parseTask() {
 async function autoSchedule() {
     const btn = document.getElementById('scheduleBtn');
     const originalText = btn.innerHTML;
-    btn.innerHTML = '<span class="loading"></span> Scheduling...';
+    btn.innerHTML = '<span class="loading"></span>';
     btn.disabled = true;
 
     const response = await fetch('/api/schedule', {
@@ -314,18 +597,18 @@ async function autoSchedule() {
 // Load calendar events
 async function loadCalendarEvents(fetchInfo, successCallback, failureCallback) {
     // Load tasks and external events in parallel for better performance
-    const url = showCompletedTasks ? '/api/tasks?include_completed=true' : '/api/tasks';
     const [taskResponse, externalResponse] = await Promise.all([
-        fetch(url),
+        fetch('/api/tasks?include_completed=true'),
         fetch('/api/external-events')
     ]);
-    const [tasks, externalEvents] = await Promise.all([
+    const [allTasks, externalEvents] = await Promise.all([
         taskResponse.json(),
         externalResponse.json()
     ]);
+    const calendarTasks = showCompletedTasks ? allTasks : allTasks.filter(t => !t.completed);
 
     // Format task events
-    const taskEvents = tasks
+    const taskEvents = calendarTasks
         .filter(task => task.scheduled_start && task.scheduled_end)
         .map(task => {
             let className = 'task-event';
@@ -470,7 +753,7 @@ async function updateTaskSchedule(taskId, start, end, freeze = false) {
 
 // Handle task reorder
 async function handleTaskReorder(evt) {
-    const taskIds = Array.from(document.querySelectorAll('.task-item')).map(item =>
+    const taskIds = Array.from(document.querySelectorAll('#taskList .task-item')).map(item =>
         parseInt(item.dataset.taskId)
     );
 
@@ -484,6 +767,8 @@ async function handleTaskReorder(evt) {
     await loadTasks();
 }
 
+// ===== Task editing =====
+
 // Edit task
 function editTask(taskId) {
     const task = tasks.find(t => t.id === taskId);
@@ -493,9 +778,9 @@ function editTask(taskId) {
     document.getElementById('editTitle').value = task.title;
     document.getElementById('editDescription').value = task.description || '';
     document.getElementById('editSpace').value = task.space_id != null ? String(task.space_id) : '';
+    document.getElementById('editStatus').value = task.status || 'todo';
     document.getElementById('editPriority').value = task.priority;
     document.getElementById('editDuration').value = task.estimated_duration || 60;
-    document.getElementById('editCompleted').checked = task.completed;
 
     if (task.deadline) {
         const deadline = new Date(task.deadline);
@@ -514,9 +799,9 @@ async function saveTask() {
         title: document.getElementById('editTitle').value,
         description: document.getElementById('editDescription').value,
         space_id: document.getElementById('editSpace').value ? parseInt(document.getElementById('editSpace').value) : null,
+        status: document.getElementById('editStatus').value,
         priority: parseInt(document.getElementById('editPriority').value),
         estimated_duration: parseInt(document.getElementById('editDuration').value),
-        completed: document.getElementById('editCompleted').checked,
         deadline: document.getElementById('editDeadline').value ?
                  document.getElementById('editDeadline').value + ':00' : null
     };
@@ -562,7 +847,7 @@ async function toggleTaskCompletion(taskId) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            completed: !task.completed
+            status: task.completed ? 'todo' : 'done'
         })
     });
 
@@ -573,11 +858,6 @@ async function toggleTaskCompletion(taskId) {
             !task.completed ? '✓ Task marked as done!' : 'Task marked as incomplete',
             !task.completed ? 'success' : 'info'
         );
-
-        // Update overview if we're on that view
-        if (document.getElementById('overviewView').style.display !== 'none') {
-            renderOverview();
-        }
     } else {
         showAlert('Error updating task', 'danger');
     }
@@ -631,11 +911,14 @@ async function freezeDay(dateStr) {
     }
 }
 
+// ===== Spaces =====
+
 // Load spaces
 async function loadSpaces() {
     const response = await fetch('/api/spaces');
     spaces = await response.json();
     updateSpaceSelects();
+    if (currentDestination === 'tasks') renderSpaceChips();
 }
 
 // Update space selects (value = space id; space_id is the canonical relation)
@@ -910,6 +1193,8 @@ function addConstraintToEdit() {
     container.appendChild(div);
 }
 
+// ===== Calendar sources =====
+
 // Show calendar modal
 async function showCalendarModal() {
     await loadCalendarSources();
@@ -981,7 +1266,8 @@ async function logout() {
     window.location.href = '/login';
 }
 
-// Utility functions
+// ===== Utility functions =====
+
 function showAlert(message, type) {
     // Create alert element
     const alert = document.createElement('div');
@@ -1036,34 +1322,7 @@ function getDayName(dayIndex) {
     return days[dayIndex];
 }
 
-// ===== OVERVIEW TAB FUNCTIONALITY =====
-
-// Switch between calendar and overview views
-function switchView(view) {
-    const calendarView = document.getElementById('calendarView');
-    const overviewView = document.getElementById('overviewView');
-    const calendarTab = document.getElementById('calendarTab');
-    const overviewTab = document.getElementById('overviewTab');
-    const calendarLegend = document.getElementById('calendarLegend');
-    const viewTitle = document.getElementById('viewTitle');
-
-    if (view === 'calendar') {
-        calendarView.style.display = 'block';
-        overviewView.style.display = 'none';
-        calendarTab.classList.add('active');
-        overviewTab.classList.remove('active');
-        calendarLegend.style.display = 'flex';
-        viewTitle.textContent = 'Schedule';
-    } else if (view === 'overview') {
-        calendarView.style.display = 'none';
-        overviewView.style.display = 'block';
-        calendarTab.classList.remove('active');
-        overviewTab.classList.add('active');
-        calendarLegend.style.display = 'none';
-        viewTitle.textContent = 'Overview';
-        renderOverview();
-    }
-}
+// ===== Overview (grouped by space, kept as-is) =====
 
 // Render the overview with stats and space cards
 function renderOverview() {
@@ -1373,11 +1632,6 @@ async function createTaskFromModal() {
 
         // Clear the selected space
         window.selectedSpaceForNewTask = null;
-
-        // Update overview if we're on that view
-        if (document.getElementById('overviewView').style.display !== 'none') {
-            renderOverview();
-        }
 
         // Close the modal
         addTaskModal.hide();
