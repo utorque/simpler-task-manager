@@ -36,8 +36,8 @@
         <!-- Global quick capture: reachable from every view, zero clicks -->
         <div class="quick-capture">
             <input type="text" class="form-control" id="quickCapture"
-                   placeholder="Capture a task… paste anything (press / to focus, Ctrl+Enter to create)">
-            <button class="btn btn-primary" id="parseTaskBtn" title="Create task with AI (Ctrl+Enter)">
+                   placeholder="Capture a task… paste anything (press / to focus, Enter to create)">
+            <button class="btn btn-primary" id="parseTaskBtn" title="Create task with AI (Enter)">
                 <i class="fas fa-magic"></i>
             </button>
         </div>
@@ -78,11 +78,11 @@
                     <div class="board-col-header">
                         <span class="board-col-title"><i class="fas fa-inbox"></i> To do</span>
                         <span class="board-col-count" id="count-todo"></span>
-                        <button class="board-col-add" data-status="todo" title="Add task here (Enter to save, Esc to cancel)">
+                        <button class="board-col-add" data-status="todo" title="Focus this column's quick-add (Enter to save)">
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
-                    <div class="board-inline-add" data-status="todo" style="display:none;">
+                    <div class="board-inline-add" data-status="todo">
                         <input type="text" class="form-control form-control-sm" placeholder="Task title… Enter ↵">
                     </div>
                     <div class="board-col-cards" id="col-todo" data-status="todo"></div>
@@ -91,11 +91,11 @@
                     <div class="board-col-header">
                         <span class="board-col-title"><i class="fas fa-play"></i> Doing</span>
                         <span class="board-col-count" id="count-doing"></span>
-                        <button class="board-col-add" data-status="doing" title="Add task here (Enter to save, Esc to cancel)">
+                        <button class="board-col-add" data-status="doing" title="Focus this column's quick-add (Enter to save)">
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
-                    <div class="board-inline-add" data-status="doing" style="display:none;">
+                    <div class="board-inline-add" data-status="doing">
                         <input type="text" class="form-control form-control-sm" placeholder="Task title… Enter ↵">
                     </div>
                     <div class="board-col-cards" id="col-doing" data-status="doing"></div>
@@ -104,11 +104,11 @@
                     <div class="board-col-header">
                         <span class="board-col-title"><i class="fas fa-hand-paper"></i> Blocked</span>
                         <span class="board-col-count" id="count-blocked"></span>
-                        <button class="board-col-add" data-status="blocked" title="Add task here (Enter to save, Esc to cancel)">
+                        <button class="board-col-add" data-status="blocked" title="Focus this column's quick-add (Enter to save)">
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
-                    <div class="board-inline-add" data-status="blocked" style="display:none;">
+                    <div class="board-inline-add" data-status="blocked">
                         <input type="text" class="form-control form-control-sm" placeholder="Task title… Enter ↵">
                     </div>
                     <div class="board-col-cards" id="col-blocked" data-status="blocked"></div>
@@ -538,7 +538,8 @@
                         <tbody>
                             <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> / <kbd>5</kbd></td><td>Switch to Tasks / Notes / Mail / Calendar / Spaces</td></tr>
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
-                            <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Create task with AI (in any capture input)</td></tr>
+                            <tr><td><kbd>Enter</kbd></td><td>Create task with AI (header or board quick-add input)</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Create task from the add-task modal textarea</td></tr>
                             <tr><td><kbd>S</kbd></td><td>Auto-schedule all tasks</td></tr>
                             <tr><td><kbd>?</kbd></td><td>This help</td></tr>
                             <tr><td><kbd>Esc</kbd></td><td>Close modal / cancel inline add / leave input</td></tr>

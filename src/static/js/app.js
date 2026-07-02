@@ -94,9 +94,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         });
     }
 
-    // Ctrl+Enter submits the quick capture
+    // Enter submits the quick capture (single-line input; no newline needed)
     document.getElementById('quickCapture').addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.key === 'Enter') {
+        if (e.key === 'Enter') {
+            e.preventDefault();
             parseTask();
         } else if (e.key === 'Escape') {
             this.blur();
@@ -419,27 +420,39 @@ async function handleBoardDrop(evt) {
 }
 
 function initBoardInlineAdd() {
-    // "+" in a column header opens an inline input: Enter creates the task
-    // directly in that column (and in the filtered space), Esc closes.
+    // Each kanban column always shows a quick-add input. The "+" button in the
+    // column header focuses that column's input (it no longer toggles
+    // visibility). Enter creates the task directly in that column (and in the
+    // filtered space); Esc clears the text but leaves the form open for rapid
+    // entry. While the AI parse request is in flight, the "+" icon is swapped
+    // for a spinner and the input is disabled so the user sees feedback.
     document.querySelectorAll('.board-col-add').forEach(btn => {
         btn.addEventListener('click', () => {
             const form = document.querySelector(`.board-inline-add[data-status="${btn.dataset.status}"]`);
-            form.style.display = form.style.display === 'none' ? 'block' : 'none';
-            if (form.style.display === 'block') form.querySelector('input').focus();
+            const input = form.querySelector('input');
+            input.focus();
         });
     });
 
     document.querySelectorAll('.board-inline-add input').forEach(input => {
         input.addEventListener('keydown', async (e) => {
             const form = input.closest('.board-inline-add');
+            const btn = document.querySelector(`.board-col-add[data-status="${form.dataset.status}"]`);
             if (e.key === 'Escape') {
                 input.value = '';
-                form.style.display = 'none';
+                input.blur();
                 return;
             }
             if (e.key !== 'Enter') return;
             const title = input.value.trim();
             if (!title) return;
+
+            // Show loading state: swap the "+" icon for a spinner and lock the
+            // input so the user gets clear feedback that creation is in flight.
+            const originalBtnHTML = btn.innerHTML;
+            btn.innerHTML = '<span class="board-col-add-spinner"></span>';
+            btn.disabled = true;
+            input.disabled = true;
 
             // Route through the AI parse endpoint (same as header quick-capture)
             // so the typed text gets title cleanup, deadline parsing,
@@ -450,17 +463,25 @@ function initBoardInlineAdd() {
             const body = { text: title, force_status: form.dataset.status };
             if (boardSpaceFilter !== null) body.restrict_space = boardSpaceFilter;
 
-            const response = await fetch('/api/tasks/parse', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            if (response.ok) {
-                input.value = ''; // stays open for rapid entry
-                await loadTasks();
-            } else {
-                const err = await response.json().catch(() => ({}));
-                showAlert(err.error || 'Error creating task', 'danger');
+            try {
+                const response = await fetch('/api/tasks/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (response.ok) {
+                    input.value = ''; // stays open for rapid entry
+                    await loadTasks();
+                    calendar.refetchEvents();
+                } else {
+                    const err = await response.json().catch(() => ({}));
+                    showAlert(err.error || 'Error creating task', 'danger');
+                }
+            } finally {
+                btn.innerHTML = originalBtnHTML;
+                btn.disabled = false;
+                input.disabled = false;
+                input.focus();
             }
         });
     });

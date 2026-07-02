@@ -880,6 +880,23 @@ body {
     color: #667eea;
 }
 
+/* Spinner shown in the column "+" button while a task is being created */
+.board-col-add-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(102, 126, 234, 0.3);
+    border-radius: 50%;
+    border-top-color: #667eea;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+}
+
+.board-col-add:disabled {
+    cursor: default;
+    opacity: 1;
+}
+
 .board-inline-add {
     padding: 0 2px 8px 2px;
 }
