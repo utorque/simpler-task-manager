@@ -35,6 +35,7 @@
 - [ ] subspaces & subtaskd
 
 ## DONE
+- [x] 2026-07 Spaces destination (press `5`, replaces the header modal) with per-space **AI context markdown** (`Space.context_markdown`) injected into every AI task prompt as guide-not-source (`prompt_context.space_guidance_block()`); `prompt.md` moved to `src/prompts/task_creation.md`; notes toolbar trimmed (table + fullscreen out)
 - [x] 2026-07 shell polish: nav order Tasks/Notes/Mail/Calendar = 1/2/3/4; mail reader (click an email → full body, still never marked read); Overview "Show done" toggle ordered by new `tasks.completed_at` (backfilled by migrate_db.py); full EasyMDE toolbar restored
 - [x] 2026-07 unified workspace (PrePRD 000): one shell, one header, Tasks kanban home (todo/doing/blocked/done + space filter chips + inline create), Calendar demoted to sibling destination (behavior preserved), Notes merged into the shell, Mail module (encrypted IMAP mailboxes, live inbox, email→task)
 - [x] help modal to see all shortcuts (press `?`; shortcuts made coherent: 1/2/3/4 destinations, / capture, S schedule, click/Ctrl/Shift conventions)

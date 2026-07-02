@@ -93,6 +93,9 @@ class Space(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), unique=True, nullable=False)
     description = db.Column(db.Text)  # Plain text description of the space (context, purpose, etc.)
+    # User-editable markdown injected into AI task prompts as guidance only
+    # (see prompt_context.space_guidance_block) — never as task content.
+    context_markdown = db.Column(db.Text, default='')
     time_constraints = db.Column(db.Text)  # JSON string of time constraints
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -109,6 +112,7 @@ class Space(db.Model):
             'id': self.id,
             'name': self.name,
             'description': self.description,
+            'context_markdown': self.context_markdown or '',
             'time_constraints': self.get_time_constraints(),
             'created_at': self.created_at.isoformat()
         }

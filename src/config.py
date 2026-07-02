@@ -15,9 +15,9 @@ _NOTES_CLEANIFY_PROMPT_DEFAULT = (
 )
 
 
-# Load system prompt once on startup
+# Load the task-creation system prompt once on startup
 def load_system_prompt():
-    prompt_path = os.path.join(os.path.dirname(__file__), 'prompt.md')
+    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', 'task_creation.md')
     try:
         with open(prompt_path, 'r', encoding='utf-8') as f:
             return f.read()

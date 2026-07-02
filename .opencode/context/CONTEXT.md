@@ -8,9 +8,9 @@
 
 ## Architecture
 
-Single-process Flask server. `src/app.py` is an **app factory only**; routes live in per-domain blueprints under `src/routes/`. Frontend is **one unified shell** (`templates/index.html`): one header (destination nav + global AI quick-capture + actions), four client-side-switched destinations (Tasks / Notes / Mail / Calendar, in that `1/2/3/4` order) deep-linkable via URL hash. Data flows:
+Single-process Flask server. `src/app.py` is an **app factory only**; routes live in per-domain blueprints under `src/routes/`. Frontend is **one unified shell** (`templates/index.html`): one header (destination nav + global AI quick-capture + actions), five client-side-switched destinations (Tasks / Notes / Mail / Calendar / Spaces, in that `1/2/3/4/5` order) deep-linkable via URL hash. Data flows:
 
-- **Capture → task**: header quick-capture (or per-space modal) → `POST /api/tasks/parse` → `parse_task_with_ai` (LLM returns one-or-more task JSON, relative deadlines normalized) → tasks persisted (`status='todo'`, ChangeLog `actor='ai'`).
+- **Capture → task**: header quick-capture (or per-space modal) → `POST /api/tasks/parse` → `parse_task_with_ai` (LLM returns one-or-more task JSON, relative deadlines normalized) → tasks persisted (`status='todo'`, ChangeLog `actor='ai'`). Every AI task prompt is assembled in `prompt_context.py`: base prompt + spaces list + **space guidance block** (per-space `context_markdown`, framed guide-not-source).
 - **Board**: `GET /api/tasks?include_completed=true` → kanban columns by `status`; drag between columns → `PUT {status}`; per-column inline create → `POST /api/tasks {status}`.
 - **Schedule**: `POST /api/schedule` → `schedule_tasks` (pure-over-data: `to_schedulable()` dicts + space-id-keyed constraints) places non-frozen incomplete tasks into 30-min slots around live-fetched ICS events + frozen tasks.
 - **Notes**: capture → debounced autosave (deferred persistence) → optional Cleanify (LLM tidy, undo) → optional promote-selection-to-task (draft → shared confirm modal → `POST /api/tasks`).
@@ -22,14 +22,14 @@ Module map:
 - `src/routes/` — `pages` (/, /notes→/#notes, login), `tasks`, `spaces`, `notes`, `mailboxes`, `calendar_sources` (+ external-events), `schedule` (+ logs).
 - `src/models.py` — `Task` (with `status` + `apply_status`/`apply_completed`), `Space`, `ChangeLog` (with `actor`), `Note`, `Mailbox`, `CalendarSource`.
 - `src/audit.py` — `record_change()`: the single audited-write seam.
-- `src/auth.py` / `src/datetime_utils.py` / `src/prompt_context.py` / `src/seeding.py` — extracted cross-cutting helpers (login_required, parse_iso_datetime, spaces-context prompt assembly, default spaces shared with tests).
+- `src/auth.py` / `src/datetime_utils.py` / `src/prompt_context.py` / `src/seeding.py` — extracted cross-cutting helpers (login_required, parse_iso_datetime, AI prompt assembly incl. `space_guidance_block()`, default spaces shared with tests).
 - `src/scheduler.py` — pure-over-data auto-scheduling; `to_schedulable()` adapter at the seam.
 - `src/ai_parser.py` — `AIProvider` base + `OpenAIProvider`/`AnthropicProvider`; entry points `parse_task_with_ai`, `cleanify_note_with_ai`, `email_to_task_with_ai` (all gracefully degrading); `get_ai_provider` URL-heuristic factory.
 - `src/calendar_integration.py` — live ICS fetch. `src/mail_integration.py` — live IMAP fetch (transient DTOs). `src/crypto_utils.py` — Fernet from SECRET_KEY.
-- `src/config.py` — env + prompt loading, cached at startup: `SYSTEM_PROMPT` (`prompt.md`), `NOTES_CLEANIFY_PROMPT`, `EMAIL_TO_TASK_PROMPT` (`src/prompts/*.md`).
+- `src/config.py` — env + prompt loading, cached at startup: `SYSTEM_PROMPT` (`task_creation.md`), `NOTES_CLEANIFY_PROMPT`, `EMAIL_TO_TASK_PROMPT` (all under `src/prompts/*.md`).
 - `src/templates/index.html` — THE shell (all destinations + modals incl. shortcuts help). `login.html`.
-- `src/static/js/` — `app.js` (shell nav, shortcuts, board, calendar, overview, spaces), `notes.js` (`NotesView`), `mail.js` (`MailView`), `task_draft_modal.js` (shared draft confirm).
-- `tests/` — pytest harness (in-memory SQLite, `StubAIProvider`, patched IMAP seam) + route-layer integration tests + pure-data scheduler suite. 52 tests.
+- `src/static/js/` — `app.js` (shell nav, shortcuts, board, calendar, overview), `notes.js` (`NotesView`), `mail.js` (`MailView`), `spaces.js` (`SpacesView` — space CRUD + AI context editor), `task_draft_modal.js` (shared draft confirm).
+- `tests/` — pytest harness (in-memory SQLite, `StubAIProvider`, patched IMAP seam) + route-layer integration tests + pure-data scheduler suite. 57 tests.
 - `migrate_db.py` — prod-DB migrations (see data-model topic).
 - `doc/` — `PROJECT_DESCRIPTION.md` (full schema + API ref, the authoritative spec), `README.md`, `TODO.md`, `payment_plan_possibilities.md`.
 
@@ -44,11 +44,12 @@ Module map:
 
 - **Task**: unit with title, priority (0-10, higher=more urgent), deadline, estimated_duration (minutes), scheduled_start/end, `status` (`todo/doing/blocked/done`), completed, completed_at, frozen flags.
 - **Status ⇔ completed invariant**: `status` is the single source of truth for done-ness; `completed` is kept in sync (`done` ⇔ True) for the calendar UI and legacy callers. `completed_at` is stamped on the first transition into done, kept on re-saves, cleared on leaving done. `frozen` is orthogonal.
-- **Space**: a named context (e.g. `work`, `study`, `association`) carrying JSON `time_constraints` (per-weekday windows) constraining when its tasks may be scheduled. The shared spine: tasks, notes, and mailboxes all link to a Space by `space_id`.
+- **Space**: a named context (e.g. `work`, `study`, `association`) carrying JSON `time_constraints` (per-weekday windows) constraining when its tasks may be scheduled, plus a user-editable `context_markdown`. The shared spine: tasks, notes, and mailboxes all link to a Space by `space_id`. Managed in the Spaces destination (press `5`).
+- **Space AI context**: `Space.context_markdown` is appended to every AI task prompt (`space_guidance_block()`) wrapped in explicit guide-not-source framing — it steers space choice/priority/deadline/wording but must never be copied into task fields or treated as part of the user's request.
 - **space_id vs space**: `Task.space_id` (FK) is canonical; the `Task.space` string column is legacy, unread by code, and backfilled into `space_id` by `migrate_db.py`. `to_dict()` echoes the name from the relation.
-- **Unified shell**: one page (`index.html`), one header, destinations switched client-side (`switchDestination`), deep links `#tasks/#notes/#mail/#calendar`, last destination remembered.
+- **Unified shell**: one page (`index.html`), one header, destinations switched client-side (`switchDestination`), deep links `#tasks/#notes/#mail/#calendar/#spaces`, last destination remembered.
 - **Board / Overview**: the two Tasks subviews — kanban (primary) and grouped-by-space overview (secondary); toggle persisted. The Overview's "Show done" toggle (persisted) lists finished tasks by `completed_at` desc.
-- **Shortcuts convention**: `1/2/3/4` destinations (Tasks/Notes/Mail/Calendar), `/` quick capture, `S` schedule, `?` help; on any task representation click=edit, Ctrl+click=done, Shift+click=freeze; in Mail click=open reader, right-click=email→task.
+- **Shortcuts convention**: `1/2/3/4/5` destinations (Tasks/Notes/Mail/Calendar/Spaces), `/` quick capture, `S` schedule, `?` help; on any task representation click=edit, Ctrl+click=done, Shift+click=freeze; in Mail click=open reader, right-click=email→task.
 - **Time constraints**: JSON list of `{"day": 0-6, "start": "HH:MM", "end": "HH:MM"}` on a `Space`; day 0=Monday.
 - **Frozen task / frozen day**: pinned so the auto-scheduler won't move it; still consumes a busy slot.
 - **Auto-schedule**: `POST /api/schedule` → `schedule_tasks()` places non-frozen tasks into 30-min slots by `-priority, deadline, created_at`, avoiding external + frozen + placed slots; deadline is a hard search bound (unmeetable deadline ⇒ left unscheduled).

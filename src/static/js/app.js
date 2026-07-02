@@ -8,7 +8,6 @@ let tasks = [];
 let spaces = [];
 let calendar;
 let taskModal;
-let spaceModal;
 let calendarModal;
 let addTaskModal;
 let helpModal;
@@ -34,7 +33,6 @@ function parseStoredSpaceFilter() {
 document.addEventListener('DOMContentLoaded', async function() {
     // Initialize modals
     taskModal = new bootstrap.Modal(document.getElementById('taskModal'));
-    spaceModal = new bootstrap.Modal(document.getElementById('spaceModal'));
     calendarModal = new bootstrap.Modal(document.getElementById('calendarModal'));
     addTaskModal = new bootstrap.Modal(document.getElementById('addTaskModal'));
     helpModal = new bootstrap.Modal(document.getElementById('helpModal'));
@@ -50,9 +48,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Load initial data
     await Promise.all([loadTasks(), loadSpaces()]);
 
-    // Destination: deep link (#tasks/#calendar/#notes) > last used > Tasks
+    // Destination: deep link (#tasks/#notes/#mail/#calendar/#spaces) > last used > Tasks
     const fromHash = window.location.hash.replace('#', '');
-    const initial = ['tasks', 'calendar', 'notes', 'mail'].includes(fromHash)
+    const initial = ['tasks', 'notes', 'mail', 'calendar', 'spaces'].includes(fromHash)
         ? fromHash
         : (localStorage.getItem('destination') || 'tasks');
     switchDestination(initial);
@@ -67,7 +65,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('parseTaskBtn').addEventListener('click', parseTask);
     document.getElementById('scheduleBtn').addEventListener('click', autoSchedule);
     document.getElementById('logoutBtn').addEventListener('click', logout);
-    document.getElementById('addSpaceBtn').addEventListener('click', showSpaceModal);
     document.getElementById('addCalendarBtn').addEventListener('click', showCalendarModal);
     document.getElementById('helpBtn').addEventListener('click', () => helpModal.show());
     document.getElementById('saveTaskBtn').addEventListener('click', saveTask);
@@ -136,6 +133,9 @@ function switchDestination(destination) {
     if (destination === 'mail' && window.MailView) {
         window.MailView.enter();
     }
+    if (destination === 'spaces' && window.SpacesView) {
+        window.SpacesView.enter();
+    }
 }
 
 // Board <-> Overview toggle inside the Tasks destination (persisted)
@@ -180,6 +180,7 @@ function initKeyboardShortcuts() {
             case '2': switchDestination('notes'); break;
             case '3': switchDestination('mail'); break;
             case '4': switchDestination('calendar'); break;
+            case '5': switchDestination('spaces'); break;
             case '/':
                 e.preventDefault();
                 document.getElementById('quickCapture').focus();
@@ -931,270 +932,7 @@ function updateSpaceSelects() {
         spaces.map(space => `<option value="${space.id}">${escapeHtml(space.name)}</option>`).join('');
 }
 
-// Show space modal
-async function showSpaceModal() {
-    await loadSpaces();
-    renderSpaces();
-    spaceModal.show();
-}
-
-// Render spaces
-function renderSpaces() {
-    const list = document.getElementById('spaceList');
-    list.innerHTML = spaces.map(space => `
-        <div class="card mb-3">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <h6 class="mb-0">${escapeHtml(space.name)}</h6>
-                    <div>
-                        <button class="btn btn-sm btn-outline-primary me-1" onclick="editSpace(${space.id})">
-                            <i class="fas fa-edit"></i> Edit
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteSpace(${space.id})">
-                            <i class="fas fa-trash"></i> Delete
-                        </button>
-                    </div>
-                </div>
-                ${space.description ? `<p class="text-muted small mb-2">${escapeHtml(space.description)}</p>` : ''}
-                <div class="text-muted small">
-                    ${space.time_constraints.length > 0 ?
-                        space.time_constraints.map(c =>
-                            `${getDayName(c.day)}: ${c.start} - ${c.end}`
-                        ).join('<br>') :
-                        'No time constraints'
-                    }
-                </div>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Create new space
-async function createSpace() {
-    const name = document.getElementById('newSpaceName').value.trim();
-    const description = document.getElementById('newSpaceDescription').value.trim();
-
-    if (!name) {
-        showAlert('Please enter a space name', 'warning');
-        return;
-    }
-
-    // Collect time constraints
-    const constraints = [];
-    const constraintInputs = document.querySelectorAll('.time-constraint-item');
-    constraintInputs.forEach(item => {
-        const day = parseInt(item.querySelector('.constraint-day').value);
-        const start = item.querySelector('.constraint-start').value;
-        const end = item.querySelector('.constraint-end').value;
-
-        if (start && end) {
-            constraints.push({ day, start, end });
-        }
-    });
-
-    await fetch('/api/spaces', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            name,
-            description,
-            time_constraints: constraints
-        })
-    });
-
-    // Reset form
-    document.getElementById('newSpaceName').value = '';
-    document.getElementById('newSpaceDescription').value = '';
-    document.getElementById('timeConstraints').innerHTML = '';
-    document.getElementById('addSpaceForm').style.display = 'none';
-
-    await loadSpaces();
-    renderSpaces();
-    showAlert('Space created successfully!', 'success');
-}
-
-// Edit space
-async function editSpace(spaceId) {
-    const space = spaces.find(s => s.id === spaceId);
-    if (!space) return;
-
-    // Show edit form
-    const list = document.getElementById('spaceList');
-    list.innerHTML = `
-        <div class="card mb-3">
-            <div class="card-body">
-                <h6 class="mb-3">Edit Space</h6>
-                <div class="mb-3">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-control" id="editSpaceName" value="${escapeHtml(space.name)}">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Description</label>
-                    <textarea class="form-control" id="editSpaceDescription" rows="2">${escapeHtml(space.description || '')}</textarea>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Time Constraints</label>
-                    <div id="editTimeConstraints">
-                        ${space.time_constraints.map((c, idx) => `
-                            <div class="time-constraint-item d-flex gap-2 mb-2">
-                                <select class="form-select constraint-day" style="width: auto;">
-                                    ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day, i) =>
-                                        `<option value="${i}" ${i === c.day ? 'selected' : ''}>${day}</option>`
-                                    ).join('')}
-                                </select>
-                                <input type="time" class="form-control constraint-start" value="${c.start}" style="width: auto;">
-                                <input type="time" class="form-control constraint-end" value="${c.end}" style="width: auto;">
-                                <button class="btn btn-sm btn-outline-danger" onclick="this.parentElement.remove()">
-                                    <i class="fas fa-times"></i>
-                                </button>
-                            </div>
-                        `).join('')}
-                    </div>
-                    <button class="btn btn-sm btn-outline-secondary mt-2" onclick="addConstraintToEdit()">
-                        <i class="fas fa-plus"></i> Add Time Constraint
-                    </button>
-                </div>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-primary" onclick="saveSpaceEdit(${spaceId})">Save</button>
-                    <button class="btn btn-secondary" onclick="renderSpaces()">Cancel</button>
-                </div>
-            </div>
-        </div>
-    ` + spaces.filter(s => s.id !== spaceId).map(s => `
-        <div class="card mb-3">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <h6 class="mb-0">${escapeHtml(s.name)}</h6>
-                    <div>
-                        <button class="btn btn-sm btn-outline-primary me-1" onclick="editSpace(${s.id})">
-                            <i class="fas fa-edit"></i> Edit
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteSpace(${s.id})">
-                            <i class="fas fa-trash"></i> Delete
-                        </button>
-                    </div>
-                </div>
-                ${s.description ? `<p class="text-muted small mb-2">${escapeHtml(s.description)}</p>` : ''}
-                <div class="text-muted small">
-                    ${s.time_constraints.length > 0 ?
-                        s.time_constraints.map(c =>
-                            `${getDayName(c.day)}: ${c.start} - ${c.end}`
-                        ).join('<br>') :
-                        'No time constraints'
-                    }
-                </div>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Save space edit
-async function saveSpaceEdit(spaceId) {
-    const name = document.getElementById('editSpaceName').value.trim();
-    const description = document.getElementById('editSpaceDescription').value.trim();
-
-    if (!name) {
-        showAlert('Please enter a space name', 'warning');
-        return;
-    }
-
-    // Collect time constraints
-    const constraints = [];
-    const constraintInputs = document.querySelectorAll('#editTimeConstraints .time-constraint-item');
-    constraintInputs.forEach(item => {
-        const day = parseInt(item.querySelector('.constraint-day').value);
-        const start = item.querySelector('.constraint-start').value;
-        const end = item.querySelector('.constraint-end').value;
-
-        if (start && end) {
-            constraints.push({ day, start, end });
-        }
-    });
-
-    await fetch(`/api/spaces/${spaceId}`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            name,
-            description,
-            time_constraints: constraints
-        })
-    });
-
-    await loadSpaces();
-    renderSpaces();
-    showAlert('Space updated successfully!', 'success');
-}
-
-// Delete space
-async function deleteSpace(spaceId) {
-    if (!confirm('Are you sure you want to delete this space?')) return;
-
-    await fetch(`/api/spaces/${spaceId}`, {
-        method: 'DELETE'
-    });
-
-    await loadSpaces();
-    renderSpaces();
-    showAlert('Space deleted successfully!', 'success');
-}
-
-// Show add space form
-function showAddSpaceForm() {
-    document.getElementById('addSpaceForm').style.display = 'block';
-}
-
-// Add time constraint
-function addTimeConstraint() {
-    const container = document.getElementById('timeConstraints');
-    const div = document.createElement('div');
-    div.className = 'time-constraint-item d-flex gap-2 mb-2';
-    div.innerHTML = `
-        <select class="form-select constraint-day" style="width: auto;">
-            <option value="0">Monday</option>
-            <option value="1">Tuesday</option>
-            <option value="2">Wednesday</option>
-            <option value="3">Thursday</option>
-            <option value="4">Friday</option>
-            <option value="5">Saturday</option>
-            <option value="6">Sunday</option>
-        </select>
-        <input type="time" class="form-control constraint-start" style="width: auto;">
-        <input type="time" class="form-control constraint-end" style="width: auto;">
-        <button class="btn btn-sm btn-outline-danger" onclick="this.parentElement.remove()">
-            <i class="fas fa-times"></i>
-        </button>
-    `;
-    container.appendChild(div);
-}
-
-// Add constraint to edit form
-function addConstraintToEdit() {
-    const container = document.getElementById('editTimeConstraints');
-    const div = document.createElement('div');
-    div.className = 'time-constraint-item d-flex gap-2 mb-2';
-    div.innerHTML = `
-        <select class="form-select constraint-day" style="width: auto;">
-            <option value="0">Monday</option>
-            <option value="1">Tuesday</option>
-            <option value="2">Wednesday</option>
-            <option value="3">Thursday</option>
-            <option value="4">Friday</option>
-            <option value="5">Saturday</option>
-            <option value="6">Sunday</option>
-        </select>
-        <input type="time" class="form-control constraint-start" style="width: auto;">
-        <input type="time" class="form-control constraint-end" style="width: auto;">
-        <button class="btn btn-sm btn-outline-danger" onclick="this.parentElement.remove()">
-            <i class="fas fa-times"></i>
-        </button>
-    `;
-    container.appendChild(div);
-}
+// Space management lives in the Spaces destination (spaces.js, press 5).
 
 // ===== Calendar sources =====
 
@@ -1318,11 +1056,6 @@ function formatDateTimeLocal(date) {
     const seconds = String(date.getSeconds()).padStart(2, '0');
 
     return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
-}
-
-function getDayName(dayIndex) {
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    return days[dayIndex];
 }
 
 // ===== Overview (grouped by space, kept as-is) =====

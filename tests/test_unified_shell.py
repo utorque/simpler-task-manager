@@ -11,9 +11,8 @@ def test_shell_carries_all_destinations_and_board_columns(client):
 
     # One main header with the destination nav
     assert 'app-header' in html
-    assert 'data-destination="tasks"' in html
-    assert 'data-destination="calendar"' in html
-    assert 'data-destination="notes"' in html
+    for destination in ('tasks', 'notes', 'mail', 'calendar', 'spaces'):
+        assert f'data-destination="{destination}"' in html
 
     # Global quick capture reachable from every view
     assert 'quickCapture' in html

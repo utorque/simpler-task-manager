@@ -6,15 +6,16 @@ A self-hosted workspace that unifies **tasks, calendar, notes, and mail** around
 - **Notes** — space-scoped markdown capture (full EasyMDE toolbar) with AI "Cleanify" and promote-selection-to-task
 - **Mail** — register IMAP inboxes (passwords encrypted at rest), browse live, click to read, right-click an email → AI-drafted task
 - **Calendar** — AI-parsed tasks auto-scheduled around your external ICS calendars and per-space time windows; drag to reschedule (and freeze)
+- **Spaces** — manage your contexts (work / study / …) with per-weekday scheduling windows and a per-space **AI context markdown** that guides every AI task creation (guide, not source — never copied into tasks)
 - **Quick capture** — paste anything into the header input from any view; the LLM turns it into structured tasks
-- Keyboard-first: `1/2/3/4` switch views (Tasks/Notes/Mail/Calendar), `/` focuses capture, `?` shows all shortcuts
+- Keyboard-first: `1/2/3/4/5` switch views (Tasks/Notes/Mail/Calendar/Spaces), `/` focuses capture, `?` shows all shortcuts
 
 ## Project Structure
 
 ```
 .
 ├── src/              # Flask app (app factory + routes/ blueprints), templates, static JS/CSS
-├── tests/            # pytest suite (52 tests)
+├── tests/            # pytest suite (57 tests)
 ├── migrate_db.py     # prod SQLite migration script (additive DDL + data fixups)
 ├── doc/              # Documentation
 │   ├── README.md     # Detailed setup & usage documentation

@@ -29,6 +29,9 @@
             <button class="nav-tab" data-destination="calendar" title="Calendar — press 4">
                 <i class="fas fa-calendar"></i> Calendar <kbd>4</kbd>
             </button>
+            <button class="nav-tab" data-destination="spaces" title="Spaces — press 5">
+                <i class="fas fa-map-marker-alt"></i> Spaces <kbd>5</kbd>
+            </button>
         </nav>
         <!-- Global quick capture: reachable from every view, zero clicks -->
         <div class="quick-capture">
@@ -41,9 +44,6 @@
         <div class="app-actions">
             <button class="btn app-action-btn" id="scheduleBtn" title="Auto-schedule all — press S">
                 <i class="fas fa-calendar-check"></i>
-            </button>
-            <button class="btn app-action-btn" id="addSpaceBtn" title="Manage spaces">
-                <i class="fas fa-map-marker-alt"></i>
             </button>
             <button class="btn app-action-btn" id="addCalendarBtn" title="Manage calendars">
                 <i class="fas fa-link"></i>
@@ -274,6 +274,56 @@
                 </div>
             </div>
         </section>
+
+        <!-- ===== Spaces destination: manage spaces + their AI context ===== -->
+        <section id="view-spaces" class="app-view" style="display: none;">
+            <div class="spaces-layout">
+                <aside class="spaces-list-panel">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 text-muted">Spaces</h6>
+                        <button class="btn btn-sm btn-success" id="newSpaceBtn" title="New space">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div id="spacesList"></div>
+                </aside>
+                <div class="spaces-editor-panel">
+                    <div id="spaceEditorEmpty" class="text-center text-muted py-5">
+                        <i class="fas fa-map-marker-alt fa-3x mb-3"></i>
+                        <p>Select a space — or create one with +.</p>
+                    </div>
+                    <div id="spaceEditor" style="display: none;">
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Name *</label>
+                                <input type="text" class="form-control" id="spaceEditName" placeholder="e.g., work, hobby, project">
+                            </div>
+                            <div class="col">
+                                <label class="form-label">Description <span class="text-muted small">(one line — helps the AI pick this space)</span></label>
+                                <input type="text" class="form-control" id="spaceEditDescription" placeholder="What this space is for">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">AI context <span class="text-muted small">(markdown — guides AI task creation; used as a guide, never copied into tasks)</span></label>
+                            <textarea class="form-control space-context-editor" id="spaceEditContext" rows="12"
+                                      placeholder="Background the AI should know when drafting tasks for this space: current projects, people, conventions, what counts as urgent…"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Time constraints <span class="text-muted small">(when auto-schedule may place this space's tasks; none = anytime)</span></label>
+                            <div id="spaceEditConstraints"></div>
+                            <button class="btn btn-sm btn-outline-secondary mt-2" id="spaceAddConstraintBtn">
+                                <i class="fas fa-plus"></i> Add time window
+                            </button>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <button class="btn btn-primary" id="spaceSaveBtn"><i class="fas fa-check"></i> Save</button>
+                            <span id="spaceSaveIndicator" class="small text-muted"></span>
+                            <button class="btn btn-outline-danger ms-auto" id="spaceDeleteBtn"><i class="fas fa-trash"></i> Delete space</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <!-- Mail Message Reader Modal -->
@@ -416,53 +466,6 @@
         </div>
     </div>
 
-    <!-- Space Modal -->
-    <div class="modal fade" id="spaceModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Manage Spaces</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <button class="btn btn-primary btn-sm" id="addNewSpaceBtn" onclick="showAddSpaceForm()">
-                            <i class="fas fa-plus"></i> Add Space
-                        </button>
-                    </div>
-
-                    <!-- Add Space Form -->
-                    <div id="addSpaceForm" class="card mb-3" style="display: none;">
-                        <div class="card-body">
-                            <h6 class="mb-3">Add New Space</h6>
-                            <div class="mb-3">
-                                <label class="form-label">Name *</label>
-                                <input type="text" class="form-control" id="newSpaceName" placeholder="e.g., work, hobby, project">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Description</label>
-                                <textarea class="form-control" id="newSpaceDescription" rows="2" placeholder="Describe what this space is for..."></textarea>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Time Constraints (optional)</label>
-                                <div id="timeConstraints"></div>
-                                <button class="btn btn-sm btn-outline-secondary mt-2" onclick="addTimeConstraint()">
-                                    <i class="fas fa-plus"></i> Add Time Constraint
-                                </button>
-                            </div>
-                            <div class="d-flex gap-2">
-                                <button class="btn btn-primary" onclick="createSpace()">Create</button>
-                                <button class="btn btn-secondary" onclick="document.getElementById('addSpaceForm').style.display='none'">Cancel</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="spaceList"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Calendar Source Modal -->
     <div class="modal fade" id="calendarModal" tabindex="-1">
         <div class="modal-dialog">
@@ -533,7 +536,7 @@
                     <h6 class="text-muted">Everywhere</h6>
                     <table class="table table-sm shortcuts-table">
                         <tbody>
-                            <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd></td><td>Switch to Tasks / Notes / Mail / Calendar</td></tr>
+                            <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> / <kbd>5</kbd></td><td>Switch to Tasks / Notes / Mail / Calendar / Spaces</td></tr>
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
                             <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Create task with AI (in any capture input)</td></tr>
                             <tr><td><kbd>S</kbd></td><td>Auto-schedule all tasks</td></tr>
@@ -586,6 +589,7 @@
     <script src="/static/js/task_draft_modal.js"></script>
     <script src="/static/js/notes.js"></script>
     <script src="/static/js/mail.js"></script>
+    <script src="/static/js/spaces.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

@@ -68,7 +68,7 @@ simpler-smart-calendar/
 │   ├── mail_integration.py    # live IMAP fetch (transient DTOs)
 │   ├── crypto_utils.py        # Fernet encrypt/decrypt derived from SECRET_KEY
 │   ├── config.py              # env + prompt loading (cached at startup)
-│   ├── prompt.md              # task-parsing system prompt
+│   ├── prompts/               # AI system prompts (task_creation, notes_cleanify, email_to_task)
 │   ├── prompts/
 │   │   ├── notes_cleanify.md  # Cleanify system prompt
 │   │   └── email_to_task.md   # email-to-task system prompt
@@ -111,7 +111,7 @@ simpler-smart-calendar/
 `to_dict()` echoes `space` (the name) denormalized from the `space_rel` relation — `space_id` is canonical.
 
 ### `spaces`
-`id`, `name` (unique), `description` (helps the AI infer context), `time_constraints` (JSON string), `created_at`.
+`id`, `name` (unique), `description` (helps the AI infer context), `context_markdown` (user-editable AI guidance — see AI Integration), `time_constraints` (JSON string), `created_at`.
 
 **Time constraints format** (day 0=Monday … 6=Sunday):
 ```json
@@ -179,7 +179,7 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 - `GET /api/logs?limit=` — ChangeLog entries, newest first
 
 ### Spaces (`src/routes/spaces.py`)
-- `GET/POST /api/spaces`, `PUT/DELETE /api/spaces/<id>` — CRUD, audited
+- `GET/POST /api/spaces`, `PUT/DELETE /api/spaces/<id>` — CRUD, audited; fields incl. `context_markdown` (AI guidance) and `time_constraints`
 
 ### Notes (`src/routes/notes.py`)
 - `GET /api/notes?space_id=` — DTOs ordered by updated_at desc
@@ -207,11 +207,12 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 
 One page, one header:
 
-- **Header**: brand · nav tabs (Tasks/Notes/Mail/Calendar, in `1/2/3/4` order) · global quick-capture input (AI task creation from anywhere) · action icons (auto-schedule, spaces, calendars, shortcuts help, logout).
-- **Destinations** are sections toggled client-side (no page reloads), deep-linkable via `#tasks / #notes / #mail / #calendar`; the last destination is remembered (`localStorage`).
+- **Header**: brand · nav tabs (Tasks/Notes/Mail/Calendar/Spaces, in `1/2/3/4/5` order) · global quick-capture input (AI task creation from anywhere) · action icons (auto-schedule, calendars, shortcuts help, logout).
+- **Destinations** are sections toggled client-side (no page reloads), deep-linkable via `#tasks / #notes / #mail / #calendar / #spaces`; the last destination is remembered (`localStorage`).
 - **Tasks**: kanban board (SortableJS across columns → `PUT {status}`; intra-column order is priority/deadline — dedicated ordinal deferred per PrePRD), space filter chips (persisted), per-column "+" inline create (Enter creates in that column/space; input stays open for rapid entry), Done column capped at 30 most recently finished (`completed_at` desc). Board ⇄ Overview toggle persisted; the Overview has a persisted "Show done" toggle listing finished tasks most-recently-finished first.
 - **Calendar**: preserved behavior — FullCalendar with drag = reschedule + auto-freeze (Ctrl skips freeze), resize = duration change, sidebar task list with drag-to-reorder.
-- **Notes** (`notes.js`, `NotesView` module, lazy init): EasyMDE source editor with the full formatting toolbar (headings, lists, table, preview/side-by-side/fullscreen…) plus the custom add-task/Cleanify/Undo actions, deferred persistence (no empty "Untitled" rows), debounced autosave, Cleanify + single-step Undo, promote-selection-to-task.
+- **Notes** (`notes.js`, `NotesView` module, lazy init): EasyMDE source editor with the standard formatting toolbar (headings, lists, quote, code, link/image, preview, side-by-side — table and fullscreen deliberately omitted) plus the custom add-task/Cleanify/Undo actions, deferred persistence (no empty "Untitled" rows), debounced autosave, Cleanify + single-step Undo, promote-selection-to-task.
+- **Spaces** (`spaces.js`, `SpacesView` module, lazy init): space list + editor — name, description, **AI context markdown** (guidance injected into every AI task prompt), and per-weekday time windows. Replaces the old header-button modal.
 - **Mail** (`mail.js`, `MailView` module, lazy init): mailbox sidebar + add/edit modal, live inbox list, click a message → reader modal (full plain-text body, still read-only server-side), right-click (or Task button) → AI draft → shared confirm modal.
 - **`task_draft_modal.js`**: the shared "confirm this AI task draft" modal used by both promote-to-task and email-to-task (drafts are never silently persisted).
 
@@ -219,7 +220,7 @@ One page, one header:
 
 | Shortcut | Action |
 |---|---|
-| `1` / `2` / `3` / `4` | Switch to Tasks / Notes / Mail / Calendar |
+| `1` / `2` / `3` / `4` / `5` | Switch to Tasks / Notes / Mail / Calendar / Spaces |
 | `/` | Focus the quick-capture input |
 | `Ctrl+Enter` | Create task with AI (in any capture input) |
 | `S` | Auto-schedule all |
@@ -235,11 +236,13 @@ Provider abstraction in `ai_parser.py`: `OpenAIProvider` (any OpenAI-compatible 
 
 | Entry point | Prompt file | Post-processing | Degradation |
 |---|---|---|---|
-| `parse_task_with_ai` | `src/prompt.md` (+ spaces context) | JSON → task dicts, relative deadlines normalized | trivial title/description draft |
+| `parse_task_with_ai` | `src/prompts/task_creation.md` (+ spaces context) | JSON → task dicts, relative deadlines normalized | trivial title/description draft |
 | `cleanify_note_with_ai` | `src/prompts/notes_cleanify.md` (+ note's Space context) | raw text | original note returned unchanged |
 | `email_to_task_with_ai` | `src/prompts/email_to_task.md` (+ spaces context) | reuses `parse_task` seam | subject/body-derived draft |
 
 There is deliberately **no** `AIProvider.complete()` generalization — `cleanify` is a sibling method and email-to-task reuses `parse_task` (see `.opencode/context/topics/ai-parsing.md`).
+
+**Space guidance**: every task-drafting prompt additionally carries the per-space **AI context markdown** (`Space.context_markdown`, edited in the Spaces destination), assembled by `prompt_context.space_guidance_block()`. It is wrapped in explicit guide-not-source framing: the model uses it to choose the space and set priority/deadline/duration/wording, but must never copy it into task fields or derive tasks from it. Spaces without context contribute nothing (prompts stay identical to before).
 
 ## Configuration
 
@@ -269,7 +272,7 @@ Run it after pulling code that changes `models.py`, before `docker compose up`.
 
 ## Testing
 
-`pytest` (52 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
+`pytest` (57 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
 
 ```bash
 python -m pytest -q

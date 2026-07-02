@@ -27,7 +27,7 @@
 `to_dict()` returns a `space` (name) field denormalized from `space_rel` — the UI/API sees a space name but the canonical link is `space_id`. The legacy `space` string is never read.
 
 ### `spaces`
-`id`, `name` (unique), `description` (Text, helps AI infer context), `time_constraints` (Text — JSON string), `created_at`. Helpers `get_time_constraints()` / `set_time_constraints()` round-trip the JSON. Default spaces seeded: `work` (Mon-Fri 09-17), `study` (no constraints), `association` (Wed 18-22).
+`id`, `name` (unique), `description` (Text, helps AI infer context), `context_markdown` (Text — user-editable AI guidance injected into every task-drafting prompt as guide-not-source; see ai-parsing topic), `time_constraints` (Text — JSON string), `created_at`. Helpers `get_time_constraints()` / `set_time_constraints()` round-trip the JSON. Default spaces seeded: `work` (Mon-Fri 09-17), `study` (no constraints), `association` (Wed 18-22).
 
 **time_constraints JSON shape:**
 ```json

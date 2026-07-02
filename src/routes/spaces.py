@@ -23,7 +23,8 @@ def create_space():
 
     space = Space(
         name=data['name'],
-        description=data.get('description', '')
+        description=data.get('description', ''),
+        context_markdown=data.get('context_markdown', '')
     )
     space.set_time_constraints(data.get('time_constraints', []))
 
@@ -46,6 +47,8 @@ def update_space(space_id):
         space.name = data['name']
     if 'description' in data:
         space.description = data['description']
+    if 'context_markdown' in data:
+        space.context_markdown = data['context_markdown']
     if 'time_constraints' in data:
         space.set_time_constraints(data['time_constraints'])
 

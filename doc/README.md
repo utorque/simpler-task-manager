@@ -5,8 +5,8 @@ A simple, fast, self-hosted workspace designed for people with ADHD: **tasks, ca
 ## Features
 
 ### The unified shell
-- **One main header** with the destination nav (Tasks / Notes / Mail / Calendar), a **global quick-capture input** (AI task creation from any view), and action buttons (auto-schedule, spaces, calendars, shortcuts help, logout)
-- **View switching without page reloads**: press `1` (Tasks) / `2` (Notes) / `3` (Mail) / `4` (Calendar), or click the tabs; deep links via `/#tasks`, `/#notes`, `/#mail`, `/#calendar`; the app reopens where you left it
+- **One main header** with the destination nav (Tasks / Notes / Mail / Calendar / Spaces), a **global quick-capture input** (AI task creation from any view), and action buttons (auto-schedule, calendars, shortcuts help, logout)
+- **View switching without page reloads**: press `1` (Tasks) / `2` (Notes) / `3` (Mail) / `4` (Calendar) / `5` (Spaces), or click the tabs; deep links via `/#tasks`, `/#notes`, `/#mail`, `/#calendar`, `/#spaces`; the app reopens where you left it
 - **Coherent shortcuts everywhere** — press `?` in the app for the full list
 
 ### Tasks (home) — kanban board
@@ -24,7 +24,7 @@ A simple, fast, self-hosted workspace designed for people with ADHD: **tasks, ca
 - **Everything is a gesture**: drag to reschedule, resize to change duration, `Ctrl+Click` to complete, click to edit
 
 ### Notes
-- Space-scoped markdown notes (EasyMDE with the **full formatting toolbar** — headings, lists, tables, preview, side-by-side, fullscreen) with **debounced autosave** and deferred persistence (no empty "Untitled" leftovers)
+- Space-scoped markdown notes (EasyMDE with the standard formatting toolbar — headings, lists, quote, code, links, preview, side-by-side) with **debounced autosave** and deferred persistence (no empty "Untitled" leftovers)
 - **Cleanify**: one click runs the messy note through the LLM and tidies it in place — with a persistent one-step Undo
 - **Promote to task**: select any text in a note → one click → AI drafts a task (pre-filled with the note's space) → confirm before it's saved
 
@@ -34,8 +34,12 @@ A simple, fast, self-hosted workspace designed for people with ADHD: **tasks, ca
 - Browse the inbox **live** (nothing is stored, messages stay unread) and **click any email to read it** — the full body opens in a reader, still without marking it read on the server
 - **Right-click an email → task** (also from the reader): the LLM derives the actual ask from the email, pre-tagged with the mailbox's Space; you confirm before anything is saved
 
+### Spaces
+- Full space management as its own destination (press `5`): name, description, per-weekday **time windows** (constrain auto-scheduling), and…
+- **AI context** — a free markdown field per space. Whatever you write there (current projects, people, what counts as urgent, conventions) is fed to the LLM alongside the system prompt on **every** AI task creation (quick capture, note promotion, email-to-task). It is explicitly framed as a *guide, not a source*: it steers space choice, priority, deadline, and wording, but is never copied into your tasks
+
 ### Cross-cutting
-- **Spaces**: shared contexts (work / study / association / …) with per-weekday time windows that constrain scheduling; tasks, notes, and mailboxes all attach to them
+- **Spaces**: shared contexts (work / study / association / …); tasks, notes, and mailboxes all attach to them
 - **Change Logging**: every create/update/delete is audited with full before/after snapshots and an actor tag (user vs AI) — future fuel for preference learning
 - **Single shared password** (`APP_PASSWORD`) gates everything; no accounts to manage
 
@@ -115,9 +119,11 @@ python src/app.py                   # http://localhost:53000
 ### Prompts
 
 The three AI system prompts are plain markdown files, loaded once at startup — edit and restart to customize:
-- `src/prompt.md` — task parsing (the JSON formatting contract)
+- `src/prompts/task_creation.md` — task parsing (the JSON formatting contract)
 - `src/prompts/notes_cleanify.md` — note tidying
 - `src/prompts/email_to_task.md` — email-to-task extraction
+
+Per-space **AI context** (edited live in the Spaces view, no restart needed) is appended to the task-drafting prompts automatically.
 
 ### Default Spaces
 
@@ -132,7 +138,7 @@ See [PROJECT_DESCRIPTION.md](PROJECT_DESCRIPTION.md) for the full schema and end
 ### Running Tests
 
 ```bash
-python -m pytest -q     # 52 route-layer + scheduler tests
+python -m pytest -q     # 57 route-layer + scheduler tests
 ```
 
 ### Building Docker Image

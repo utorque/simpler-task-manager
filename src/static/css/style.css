@@ -1208,6 +1208,59 @@ body {
     color: white;
 }
 
+/* Spaces destination */
+.spaces-layout {
+    display: flex;
+    gap: 16px;
+    height: 100%;
+}
+
+.spaces-list-panel {
+    width: 260px;
+    flex-shrink: 0;
+    background: #fff;
+    border: 2px solid #e0e6ed;
+    border-radius: 12px;
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+.spaces-editor-panel {
+    flex: 1;
+    min-width: 0;
+    background: #fff;
+    border: 2px solid #e0e6ed;
+    border-radius: 12px;
+    padding: 1.25rem;
+    overflow-y: auto;
+}
+
+.space-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 0.6rem 0.4rem;
+    border-bottom: 1px solid #f1f3f5;
+    cursor: pointer;
+}
+
+.space-row:hover { background: #f8f9fa; }
+.space-row.active { background: #e7f1ff; }
+.space-row-name { font-weight: 600; color: #212529; }
+.space-row-meta {
+    display: flex;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: #6c757d;
+    flex-shrink: 0;
+}
+
+.space-context-editor {
+    font-family: var(--bs-font-monospace, monospace);
+    font-size: 0.85rem;
+}
+
 /* Shortcuts help modal */
 .shortcuts-table td:first-child {
     white-space: nowrap;
@@ -1225,8 +1278,8 @@ body {
 @media (max-width: 992px) {
     .app-brand-name { display: none; }
     .nav-tab kbd { display: none; }
-    .calendar-layout, .notes-layout, .mail-layout { flex-direction: column; }
-    .calendar-sidebar, .notes-list-panel, .mail-sidebar { width: 100%; max-height: 40vh; }
+    .calendar-layout, .notes-layout, .mail-layout, .spaces-layout { flex-direction: column; }
+    .calendar-sidebar, .notes-list-panel, .mail-sidebar, .spaces-list-panel { width: 100%; max-height: 40vh; }
     .board { flex-wrap: wrap; height: auto; }
     .board-col { min-width: 45%; }
 }

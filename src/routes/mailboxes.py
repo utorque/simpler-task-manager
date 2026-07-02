@@ -13,7 +13,7 @@ from auth import login_required
 from crypto_utils import decrypt_secret, encrypt_secret, InvalidToken
 from mail_integration import fetch_message_body, fetch_messages
 from models import db, Mailbox
-from prompt_context import spaces_context
+from prompt_context import build_email_to_task_prompt
 
 mailboxes_bp = Blueprint('mailboxes', __name__)
 
@@ -171,9 +171,9 @@ def email_to_task(mailbox_id, uid):
     if message is None:
         return jsonify({'error': 'Message not found'}), 404
 
-    # Dedicated email prompt + the same space-list context as every other AI
-    # task path.
-    system_prompt = current_app.config['EMAIL_TO_TASK_PROMPT'] + "\n\n" + spaces_context()
+    # Dedicated email prompt + the same space-list context and space guidance
+    # as every other AI task path.
+    system_prompt = build_email_to_task_prompt()
 
     drafts = email_to_task_with_ai(message['subject'], message.get('body', ''), system_prompt)
 

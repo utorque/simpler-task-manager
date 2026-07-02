@@ -1,6 +1,6 @@
 # AI Task Parsing + Note Cleanify + Email-to-Task
 
-> `src/ai_parser.py` + `src/prompt.md` (task parsing) + `src/prompts/notes_cleanify.md` (note tidying) + `src/prompts/email_to_task.md` (email-to-task). Generic provider abstraction around OpenAI-compatible and Anthropic APIs. Prompt-context assembly (available-spaces block, space hint) is centralized in `src/prompt_context.py` (`spaces_context()`, `build_task_parse_prompt()`).
+> `src/ai_parser.py` + `src/prompts/task_creation.md` (task parsing) + `src/prompts/notes_cleanify.md` (note tidying) + `src/prompts/email_to_task.md` (email-to-task). Generic provider abstraction around OpenAI-compatible and Anthropic APIs. Prompt-context assembly (available-spaces block, per-space guidance, space hint) is centralized in `src/prompt_context.py` (`spaces_context()`, `space_guidance_block()`, `build_task_parse_prompt()`, `build_email_to_task_prompt()`).
 
 ## Provider abstraction
 - `AIProvider` base: `__init__(api_key, base_url, model)` + `parse_task(text, system_prompt) -> List[Dict]`.
@@ -11,7 +11,7 @@
 ## Entry point
 `parse_task_with_ai(text, ...)` (called from `routes/tasks.py` `/api/tasks/parse` and `routes/notes.py` promote-to-task):
 1. Build provider via `get_ai_provider` using `Config.AI_API_KEY/BASE_URL/MODEL`.
-2. Send `text` + `Config.SYSTEM_PROMPT` (loaded once from `src/prompt.md` at startup).
+2. Send `text` + `Config.SYSTEM_PROMPT` (loaded once from `src/prompts/task_creation.md` at startup).
 3. `_process_response(response_text)` — strips ` ```json ` / ` ``` ` fences, `json.loads`; accepts **either a single dict or a list of dicts** (multi-task parsing is supported). Each task dict's relative `deadline` ("tomorrow", "next week", "next monday", …) is normalized to an absolute datetime via `datetime.now()`.
 4. Returns `List[Dict]` — caller persists each as a `Task`.
 
@@ -19,10 +19,15 @@
 - `AI_API_KEY` (preferred) — falls back to legacy `ANTHROPIC_API_KEY` if unset (see `doc/README.md`).
 - `AI_API_BASE_URL` — e.g. `https://api.mistral.ai/v1/`, `https://api.anthropic.com/`.
 - `AI_MODEL` — e.g. `mistral-small`, `claude-haiku-4-5`, `gpt-3.5-turbo`.
-- `SYSTEM_PROMPT` — read from `src/prompt.md` once in `config.py:load_system_prompt()`; missing file falls back to a minimal default string.
+- `SYSTEM_PROMPT` — read from `src/prompts/task_creation.md` once in `config.py:load_system_prompt()`; missing file falls back to a minimal default string.
+
+## Space guidance block (guide, not source)
+- `Space.context_markdown` (user-edited in the Spaces destination) is appended to EVERY task-drafting prompt by `prompt_context.space_guidance_block()`: a `--- SPACE CONTEXT (guidance only) ---` section listing each non-empty space context, preceded by explicit framing that it steers decisions (space choice, priority, deadline, duration, wording) and is NOT part of the user's request — never to be copied into task fields or used as a task source.
+- Empty when no space has context, so baseline prompts are byte-identical to pre-feature ones. Cleanify does NOT get the block (it's a task-drafting concern).
+- `build_email_to_task_prompt()` mirrors `build_task_parse_prompt()` (EMAIL_TO_TASK_PROMPT + spaces list + guidance); the mailboxes route uses it instead of assembling inline.
 
 ## Caveats
-- `prompt.md` is the **formatting contract** for the LLM's JSON output — editing it can break `_process_response`'s parsing assumptions. Treat prompt + parser as a pair.
+- `task_creation.md` is the **formatting contract** for the LLM's JSON output — editing it can break `_process_response`'s parsing assumptions. Treat prompt + parser as a pair.
 - `openai` SDK is in `requirements.txt` but the OpenAI-compatible provider path uses raw `requests`; the SDK is pulled in for type/compat only.
 - Deadline normalization handles a fixed set of English relative phrases — new languages or phrasings need added branches in `_process_response`.
 
@@ -36,6 +41,6 @@
 
 ## Email-to-task seam (Mail module, same reuse pattern as promote-to-task)
 - `email_to_task_with_ai(subject, body, system_prompt) -> List[Dict]` in `src/ai_parser.py` — **reuses the `parse_task` provider seam** (user message = `"Subject: <subject>\n\n<body>"`); no new provider method, consistent with the no-`complete()` decision. Graceful degradation: on any exception or empty response it returns a single trivial draft (`title = subject`, `description = body[:500]`, priority 5).
-- `Config.EMAIL_TO_TASK_PROMPT` — loaded once at startup from `src/prompts/email_to_task.md` (`load_email_to_task_prompt()`, sibling loaders pattern; missing file → default string). The mailboxes route appends `prompt_context.spaces_context()`.
+- `Config.EMAIL_TO_TASK_PROMPT` — loaded once at startup from `src/prompts/email_to_task.md` (`load_email_to_task_prompt()`, sibling loaders pattern; missing file → default string). The mailboxes route builds the full prompt via `prompt_context.build_email_to_task_prompt()` (spaces list + space guidance).
 - The route (`POST /api/mailboxes/<id>/messages/<uid>/add-task`) pre-tags drafts with the mailbox's `space_id` when the LLM returned none, and persists NOTHING — the client confirms via the shared `TaskDraftModal` → `POST /api/tasks`. ChangeLog: the confirmed create logs as `entity_type='task', action='create'`.
 - Actor convention: tasks created through `/api/tasks/parse` log `actor='ai'` in ChangeLog; drafts confirmed by the user through `POST /api/tasks` log `actor='user'` (the human made the final call).
