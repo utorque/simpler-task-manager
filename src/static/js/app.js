@@ -19,6 +19,11 @@ let currentDestination = null;
 let tasksSubview = localStorage.getItem('tasksSubview') || 'board';
 let boardSpaceFilter = parseStoredSpaceFilter();
 
+// Multi-selection (kanban board only). Alt+click toggles a card in/out of
+// this set; dragging a selected card moves the whole set; Enter forces all
+// selected to done; Ctrl+C copies them as markdown bullets.
+let selectedTaskIds = new Set();
+
 const TASK_STATUSES = ['todo', 'doing', 'blocked', 'done'];
 const DONE_COLUMN_LIMIT = 30;
 
@@ -73,11 +78,21 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('createTaskFromModalBtn').addEventListener('click', createTaskFromModal);
 
     // Task interactions share one convention everywhere:
-    // click = edit, Ctrl+click = done, Shift+click = freeze.
+    // click = edit, Ctrl+click = done, Shift+click = freeze, Alt+click = select.
     wireTaskClickDelegation('taskList', '.task-item');
     wireTaskClickDelegation('spaceCardsContainer', '.space-task-item');
     wireTaskClickDelegation('boardView', '.board-card');
     wireTaskClickDelegation('overviewDoneList', '.task-item');
+
+    // Clicking empty space inside the board clears the multi-selection.
+    const boardViewEl = document.getElementById('boardView');
+    if (boardViewEl) {
+        boardViewEl.addEventListener('click', (e) => {
+            if (!e.target.closest('.board-card') && selectedTaskIds.size > 0) {
+                clearSelection();
+            }
+        });
+    }
 
     // Ctrl+Enter submits the quick capture
     document.getElementById('quickCapture').addEventListener('keydown', function(e) {
@@ -107,6 +122,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 function switchDestination(destination) {
     if (currentDestination === destination) return;
+    clearSelection();
     currentDestination = destination;
 
     document.querySelectorAll('.app-view').forEach(v => v.style.display = 'none');
@@ -140,6 +156,7 @@ function switchDestination(destination) {
 
 // Board <-> Overview toggle inside the Tasks destination (persisted)
 function switchTasksSubview(subview) {
+    clearSelection();
     tasksSubview = subview;
     localStorage.setItem('tasksSubview', subview);
 
@@ -171,9 +188,34 @@ function isTypingContext(el) {
 
 function initKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd+C: copy the selected tasks as markdown bullets (board only).
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+            if (tasksSubview === 'board' && selectedTaskIds.size > 0
+                && !isTypingContext(e.target) && !document.querySelector('.modal.show')) {
+                e.preventDefault();
+                copySelectedAsMarkdown();
+            }
+            return;
+        }
+
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         if (isTypingContext(e.target)) return;
         if (document.querySelector('.modal.show')) return;
+
+        // Enter: force every selected board task to done.
+        if (e.key === 'Enter') {
+            if (tasksSubview === 'board' && selectedTaskIds.size > 0) {
+                e.preventDefault();
+                markSelectedDone();
+            }
+            return;
+        }
+
+        // Escape: clear the current multi-selection.
+        if (e.key === 'Escape') {
+            if (selectedTaskIds.size > 0) clearSelection();
+            return;
+        }
 
         switch (e.key) {
             case '1': switchDestination('tasks'); break;
@@ -204,6 +246,21 @@ function wireTaskClickDelegation(containerId, selector) {
         const item = e.target.closest(selector);
         if (!item) return;
         const taskId = parseInt(item.dataset.taskId);
+
+        // Alt+click toggles a board card in/out of the multi-selection.
+        if (e.altKey && item.classList.contains('board-card')) {
+            e.preventDefault();
+            toggleSelectTask(taskId);
+            return;
+        }
+
+        // Any other modifier-less click on a board card first clears an
+        // existing multi-selection, then proceeds to the normal action.
+        if (selectedTaskIds.size > 0 && !e.ctrlKey && !e.shiftKey && !e.metaKey
+            && item.classList.contains('board-card')) {
+            clearSelection();
+        }
+
         if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
             toggleTaskCompletion(taskId);
@@ -217,6 +274,93 @@ function wireTaskClickDelegation(containerId, selector) {
 }
 
 // ===== Kanban board =====
+
+// --- Multi-selection helpers (board subview only) ---
+
+function toggleSelectTask(taskId) {
+    if (selectedTaskIds.has(taskId)) {
+        selectedTaskIds.delete(taskId);
+    } else {
+        selectedTaskIds.add(taskId);
+    }
+    refreshSelectionVisuals();
+}
+
+function clearSelection() {
+    if (selectedTaskIds.size === 0) return;
+    selectedTaskIds.clear();
+    refreshSelectionVisuals();
+}
+
+// Re-apply the .selected class to whichever board cards currently match the
+// set. Called after every renderBoard and after every toggle.
+function refreshSelectionVisuals() {
+    document.querySelectorAll('#boardView .board-card').forEach(card => {
+        const id = parseInt(card.dataset.taskId);
+        card.classList.toggle('selected', selectedTaskIds.has(id));
+    });
+}
+
+// Force every selected task to status='done' (idempotent — tasks already done
+// are left untouched). Clears the selection afterwards.
+async function markSelectedDone() {
+    const ids = Array.from(selectedTaskIds);
+    const toComplete = ids.filter(id => {
+        const t = tasks.find(x => x.id === id);
+        return t && !t.completed;
+    });
+    if (toComplete.length === 0) {
+        clearSelection();
+        return;
+    }
+    let ok = 0, fail = 0;
+    for (const id of toComplete) {
+        const r = await fetch(`/api/tasks/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'done' })
+        });
+        if (r.ok) ok++; else fail++;
+    }
+    clearSelection();
+    await loadTasks();
+    calendar.refetchEvents();
+    if (fail > 0) {
+        showAlert(`Marked ${ok} done, ${fail} failed`, 'danger');
+    } else {
+        showAlert(`✓ Marked ${ok} task${ok > 1 ? 's' : ''} done`, 'success');
+    }
+}
+
+// Copy the selected tasks to the clipboard as markdown bullets:
+// `- **Title**: description` (description dropped when empty).
+async function copySelectedAsMarkdown() {
+    const selected = tasks
+        .filter(t => selectedTaskIds.has(t.id))
+        .sort((a, b) => (b.priority - a.priority));
+    if (selected.length === 0) return;
+
+    const md = selected.map(t => {
+        const title = (t.title || '').replace(/\n/g, ' ').trim();
+        const desc = (t.description || '').trim().replace(/\n/g, ' ');
+        return desc ? `- **${title}**: ${desc}` : `- **${title}**`;
+    }).join('\n');
+
+    try {
+        await navigator.clipboard.writeText(md);
+    } catch (err) {
+        // Fallback for non-secure contexts / older browsers.
+        const ta = document.createElement('textarea');
+        ta.value = md;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+    }
+    showAlert(`✓ Copied ${selected.length} task${selected.length > 1 ? 's' : ''} as markdown`, 'success');
+}
 
 function initBoardSortables() {
     document.querySelectorAll('.board-col-cards').forEach(col => {
@@ -233,17 +377,29 @@ function initBoardSortables() {
 async function handleBoardDrop(evt) {
     const newStatus = evt.to.dataset.status;
     const oldStatus = evt.from.dataset.status;
+    const draggedId = parseInt(evt.item.dataset.taskId);
+    // Multi-drag: if the dragged card is part of the current selection (and
+    // there's more than one selected), move every selected task to the target
+    // column; otherwise it's a normal single-card move.
+    const isMulti = selectedTaskIds.has(draggedId) && selectedTaskIds.size > 1;
+
     if (newStatus === oldStatus) return;
 
-    const taskId = parseInt(evt.item.dataset.taskId);
-    const response = await fetch(`/api/tasks/${taskId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
-    });
+    const ids = isMulti ? Array.from(selectedTaskIds) : [draggedId];
+    let fail = 0;
+    for (const id of ids) {
+        const response = await fetch(`/api/tasks/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+        if (!response.ok) fail++;
+    }
 
-    if (!response.ok) {
-        showAlert('Error moving task', 'danger');
+    if (isMulti) clearSelection();
+
+    if (fail > 0) {
+        showAlert(`Error moving ${fail} task${fail > 1 ? 's' : ''}`, 'danger');
     }
     await loadTasks();
     calendar.refetchEvents();
@@ -351,6 +507,8 @@ function renderBoard() {
             col.innerHTML += `<div class="board-done-overflow">+${doneOverflow} older done task${doneOverflow > 1 ? 's' : ''}</div>`;
         }
     });
+
+    refreshSelectionVisuals();
 }
 
 function renderBoardCard(task) {

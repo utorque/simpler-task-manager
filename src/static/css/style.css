@@ -913,6 +913,13 @@ body {
     opacity: 0.5;
 }
 
+.board-card.selected {
+    outline: 2px solid #4299e1;
+    outline-offset: -2px;
+    background: #ebf8ff;
+    box-shadow: 0 2px 8px rgba(66, 153, 225, 0.35);
+}
+
 .board-card.priority-high { border-left-color: #f56565; background: white; }
 .board-card.priority-medium { border-left-color: #ed8936; background: white; }
 .board-card.priority-low { border-left-color: #48bb78; background: white; }
