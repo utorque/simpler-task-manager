@@ -105,6 +105,28 @@ def resolve_db_path(explicit: str | None) -> Path:
     )
 
 
+def check_writable(db_path: Path) -> None:
+    """
+    Fail fast with a readable message instead of a mid-migration
+    'attempt to write a readonly database' stack trace. A Docker-managed DB is
+    typically root-owned on the host; SQLite also needs write access to the
+    containing directory for its journal file.
+    """
+    problems = []
+    if not os.access(db_path, os.W_OK):
+        problems.append(str(db_path))
+    if not os.access(db_path.parent, os.W_OK):
+        problems.append(f"{db_path.parent}{os.sep} (SQLite journal lives here)")
+    if problems:
+        sys.exit(
+            "[migrate] Not writable by this user:\n  "
+            + "\n  ".join(problems)
+            + "\n[migrate] If the DB was created by Docker it is probably root-owned."
+            f"\n[migrate] Fix ownership:  sudo chown -R $USER:$USER {db_path.parent}"
+            "\n[migrate] (or re-run this script with sudo)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Diff
 # ---------------------------------------------------------------------------
@@ -288,6 +310,8 @@ def main():
         apply_data_fixups(engine, dry_run=True)
         print("[migrate] dry-run — no changes written.")
         return
+
+    check_writable(db_path)
 
     if (missing_tables or missing_columns) and not args.yes:
         print()
