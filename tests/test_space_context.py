@@ -80,3 +80,58 @@ def test_parse_route_sends_guidance_to_the_provider(client, monkeypatch):
     assert resp.status_code == 201
     assert 'Work tasks default to 30 minutes.' in seen['system_prompt']
     assert '--- SPACE CONTEXT (guidance only) ---' in seen['system_prompt']
+
+
+# --- restrict_space: single-space hard prompt scoping (PRD 001, G2) ---
+
+def _set_all_contexts():
+    set_context(1, 'Work context marker W.')
+    set_context(2, 'Study context marker S.')
+    set_context(3, 'Association context marker A.')
+
+
+def test_restrict_space_by_id_lists_only_that_space(app):
+    _set_all_contexts()
+    prompt = build_task_parse_prompt(restrict_space=2)
+    # The "Available spaces" block lists ONLY the restricted space.
+    assert 'Name: study' in prompt
+    assert 'Name: work' not in prompt
+    assert 'Name: association' not in prompt
+    # The space-guidance block carries ONLY that space's context.
+    assert 'Study context marker S.' in prompt
+    assert 'Work context marker W.' not in prompt
+    assert 'Association context marker A.' not in prompt
+
+
+def test_restrict_space_by_name_matches_id_behaviour(app):
+    _set_all_contexts()
+    prompt = build_task_parse_prompt(restrict_space='Study')
+    assert 'Name: study' in prompt
+    assert 'Name: work' not in prompt
+    assert 'Name: association' not in prompt
+    assert 'Study context marker S.' in prompt
+    assert 'Work context marker W.' not in prompt
+
+
+def test_restrict_space_omitted_is_all_spaces(app):
+    _set_all_contexts()
+    prompt = build_task_parse_prompt()
+    assert 'Name: work' in prompt
+    assert 'Name: study' in prompt
+    assert 'Name: association' in prompt
+
+
+def test_restrict_space_none_is_all_spaces(app):
+    _set_all_contexts()
+    prompt = build_task_parse_prompt(restrict_space=None)
+    assert 'Name: work' in prompt
+    assert 'Name: study' in prompt
+    assert 'Name: association' in prompt
+
+
+def test_restrict_space_unresolvable_falls_back_to_all_spaces(app, caplog):
+    _set_all_contexts()
+    prompt = build_task_parse_prompt(restrict_space=999)
+    assert 'Name: work' in prompt
+    assert 'Name: study' in prompt
+    assert 'Name: association' in prompt

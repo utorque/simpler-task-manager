@@ -247,6 +247,19 @@ function wireTaskClickDelegation(containerId, selector) {
         if (!item) return;
         const taskId = parseInt(item.dataset.taskId);
 
+        // Inline priority edit (board card only): a plain click on the
+        // board-card-priority badge turns it into a number input. Must not
+        // trigger the card's open-edit-modal path nor the Alt multi-select path
+        // — a plain click is not Alt, so stopPropagation is sufficient.
+        if (item.classList.contains('board-card')
+            && e.target.closest('.board-card-priority')
+            && !e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            openPriorityEditor(item, taskId);
+            return;
+        }
+
         // Alt+click toggles a board card in/out of the multi-selection.
         if (e.altKey && item.classList.contains('board-card')) {
             e.preventDefault();
@@ -428,20 +441,26 @@ function initBoardInlineAdd() {
             const title = input.value.trim();
             if (!title) return;
 
-            const response = await fetch('/api/tasks', {
+            // Route through the AI parse endpoint (same as header quick-capture)
+            // so the typed text gets title cleanup, deadline parsing,
+            // priority/duration inference, and multi-task split. The column the
+            // user typed in is honored via `force_status`; the active board space
+            // filter scopes the AI prompt to that single space (hard scope) when
+            // set. "All spaces" omits `restrict_space` entirely.
+            const body = { text: title, force_status: form.dataset.status };
+            if (boardSpaceFilter !== null) body.restrict_space = boardSpaceFilter;
+
+            const response = await fetch('/api/tasks/parse', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    title,
-                    status: form.dataset.status,
-                    space_id: boardSpaceFilter
-                })
+                body: JSON.stringify(body)
             });
             if (response.ok) {
                 input.value = ''; // stays open for rapid entry
                 await loadTasks();
             } else {
-                showAlert('Error creating task', 'danger');
+                const err = await response.json().catch(() => ({}));
+                showAlert(err.error || 'Error creating task', 'danger');
             }
         });
     });
@@ -533,6 +552,80 @@ function renderBoardCard(task) {
             </div>
         </div>
     `;
+}
+
+// Inline priority editor: click the board-card-priority badge (plain click) →
+// the badge becomes an <input type=number>; arrows nudge, Enter commits
+// (clamped 0–10, server clamps too), Esc/blur reverts. See PRD 001 §4.3.
+function openPriorityEditor(cardEl, taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const badge = cardEl.querySelector('.board-card-priority');
+    if (!badge || badge.querySelector('input')) return; // already editing
+
+    const original = task.priority;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.max = '10';
+    input.value = String(original);
+    input.className = 'board-priority-input';
+    input.style.width = '3em';
+
+    badge.textContent = '';
+    badge.appendChild(input);
+    input.focus();
+    input.select();
+
+    let committed = false;
+
+    function revert() {
+        if (committed) return;
+        badge.textContent = String(original);
+    }
+
+    async function commit() {
+        if (committed) return;
+        const parsed = parseInt(input.value, 10);
+        if (Number.isNaN(parsed)) { committed = true; revert(); return; }
+        const clamped = Math.max(0, Math.min(10, parsed));
+        committed = true; // guard against blur firing during the in-flight PUT
+        // Detach the input synchronously before the await.
+        badge.textContent = String(clamped);
+        const r = await fetch(`/api/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ priority: clamped })
+        });
+        if (r.ok) {
+            await loadTasks(); // re-render closes the editor with the saved value
+        } else {
+            const err = await r.json().catch(() => ({}));
+            showAlert(err.error || 'Error updating priority', 'danger');
+            badge.textContent = String(original);
+        }
+    }
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            committed = true; // suppress the subsequent blur from reverting again
+            revert();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const cur = parseInt(input.value, 10);
+            if (!Number.isNaN(cur)) input.value = String(Math.min(10, cur + 1));
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const cur = parseInt(input.value, 10);
+            if (!Number.isNaN(cur)) input.value = String(Math.max(0, cur - 1));
+        }
+    });
+    input.addEventListener('blur', () => revert());
 }
 
 // ===== Calendar (preserved as-is) =====

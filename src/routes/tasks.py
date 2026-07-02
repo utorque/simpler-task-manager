@@ -9,7 +9,7 @@ from audit import record_change
 from auth import login_required
 from datetime_utils import parse_iso_datetime
 from models import db, Task, TASK_STATUSES
-from prompt_context import build_task_parse_prompt
+from prompt_context import build_task_parse_prompt, resolve_space
 
 tasks_bp = Blueprint('tasks', __name__)
 
@@ -60,21 +60,41 @@ def parse_task():
     data = request.json
     text = data.get('text')
     space_hint = data.get('space_hint')
+    restrict_space = data.get('restrict_space')
+    force_status = data.get('force_status')
 
     if not text:
         return jsonify({'error': 'No text provided'}), 400
 
-    system_prompt = build_task_parse_prompt(space_hint=space_hint)
+    # Column-placement override (kanban AI inline-create). Validated up-front so
+    # an invalid status creates nothing, matching the create_task contract.
+    if force_status is not None and force_status not in TASK_STATUSES:
+        return jsonify({'error': f"invalid status {force_status!r}, expected one of {list(TASK_STATUSES)}"}), 400
+
+    system_prompt = build_task_parse_prompt(
+        space_hint=space_hint, restrict_space=restrict_space
+    )
+
+    # Resolve the restrict_space filter once (so we can default AI drafts that
+    # came back without a space_id to the scoped space — matches the user's
+    # intent when typing into a space-filtered board, and keeps the new task
+    # visible on that board). None when no/ unresolved filter.
+    scoped_space = resolve_space(restrict_space)
 
     # parse_task_with_ai returns a list of tasks
     tasks_data = parse_task_with_ai(text, system_prompt)
 
     created_tasks = []
     for task_data in tasks_data:
+        space_id = task_data.get('space_id')
+        if space_id is None and scoped_space is not None:
+            # AI returned no space but the prompt was hard-scoped to one space;
+            # default to it so the task lands where the user typed.
+            space_id = scoped_space.id
         task = Task(
             title=task_data['title'],
             description=task_data.get('description'),
-            space_id=task_data.get('space_id'),
+            space_id=space_id,
             priority=task_data.get('priority', 0),
             deadline=parse_iso_datetime(task_data.get('deadline')),
             estimated_duration=task_data.get('estimated_duration', 60)
@@ -82,6 +102,12 @@ def parse_task():
 
         db.session.add(task)
         db.session.flush()
+        # Apply the client's column placement BEFORE the audit snapshot so the
+        # recorded `new` reflects the final status. actor stays 'ai' — the task
+        # was AI-drafted; the status override is deterministic placement, not a
+        # user-authored edit. Single create row either way.
+        if force_status is not None:
+            task.apply_status(force_status)
         record_change('create', 'task', task.id, new=task.to_dict(), actor='ai')
         created_tasks.append(task)
 
@@ -108,7 +134,13 @@ def update_task(task_id):
     if 'space_id' in data:
         task.space_id = data['space_id']
     if 'priority' in data:
-        task.priority = data['priority']
+        # Clamp to [0,10] at the seam so every caller (badge editor, modal,
+        # reorder) gets the same guarantee — see PRD 001 T11 / G4.
+        try:
+            priority = int(data['priority'])
+        except (TypeError, ValueError):
+            return jsonify({'error': f"invalid priority {data['priority']!r}, expected an integer"}), 400
+        task.priority = max(0, min(10, priority))
     if 'deadline' in data:
         task.deadline = parse_iso_datetime(data.get('deadline'))
     if 'estimated_duration' in data:
