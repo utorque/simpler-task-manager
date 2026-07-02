@@ -1,490 +1,370 @@
-// Issue 001 — Notes page: EasyMDE wiring, debounced autosave, deferred
-// persistence, list rendering, Space switcher. The three action buttons
-// (add-task / cleanify / undo-cleanify) are scaffolded disabled here;
-// their handlers land in issues 004 / 005.
+// Notes view module for the unified workspace shell.
+// Everything is scoped inside an IIFE; the shell (app.js) calls
+// NotesView.enter() when the user switches to the Notes destination.
+// Init (EasyMDE, wiring, data load) is lazy — it happens on first entry.
 
-const STORAGE_SPACE_KEY = 'notes.selectedSpaceId';
-const AUTOSAVE_DEBOUNCE_MS = 800;
-const CONTENT_PREVIEW_LEN = 80;
+window.NotesView = (function () {
 
-const state = {
-    spaces: [],
-    selectedSpaceId: null,
-    notes: [],
-    currentNote: null,        // {id, ...} once persisted (POST issued); null until then
-    editorDirty: false,
-    saveTimer: null,
-    lastCleaned: null,        // for single-step Undo (populated by Cleanify handler)
-};
+    const STORAGE_SPACE_KEY = 'notes.selectedSpaceId';
+    const AUTOSAVE_DEBOUNCE_MS = 800;
+    const CONTENT_PREVIEW_LEN = 80;
 
-let easyMDE = null;
-
-async function api(path, opts = {}) {
-    const resp = await fetch(path, {
-        headers: { 'Content-Type': 'application/json' },
-        ...opts,
-    });
-    if (resp.status === 204) return null;
-    return resp.json();
-}
-
-function setSaveIndicator(text) {
-    document.getElementById('saveIndicator').textContent = text || '';
-}
-
-// --- Spaces ---
-async function loadSpaces() {
-    state.spaces = await api('/api/spaces');
-    const sel = document.getElementById('spaceSwitcher');
-    sel.innerHTML = '';
-    for (const sp of state.spaces) {
-        const opt = document.createElement('option');
-        opt.value = sp.id;
-        opt.textContent = sp.name;
-        sel.appendChild(opt);
-    }
-    const saved = localStorage.getItem(STORAGE_SPACE_KEY);
-    const initial = saved && state.spaces.find(s => String(s.id) === saved)
-        ? Number(saved)
-        : (state.spaces[0] && state.spaces[0].id);
-    state.selectedSpaceId = initial;
-    sel.value = String(initial);
-    sel.addEventListener('change', () => {
-        state.selectedSpaceId = Number(sel.value);
-        localStorage.setItem(STORAGE_SPACE_KEY, String(state.selectedSpaceId));
-        loadNotes();
-    });
-}
-
-// --- Notes list ---
-async function loadNotes() {
-    state.notes = await api(`/api/notes?space_id=${state.selectedSpaceId}`);
-    renderList();
-}
-
-function relativeTime(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    const diff = (Date.now() - d.getTime()) / 1000;
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function previewContent(content) {
-    if (!content) return '';
-    const firstLine = content.split('\n').find(l => l.trim()) || '';
-    return firstLine.length > CONTENT_PREVIEW_LEN
-        ? firstLine.slice(0, CONTENT_PREVIEW_LEN) + '…'
-        : firstLine;
-}
-
-function renderList() {
-    const container = document.getElementById('notes-container');
-    if (state.notes.length === 0) {
-        container.innerHTML = `<div class="text-center text-muted py-5">
-            <i class="fas fa-sticky-note fa-3x mb-3"></i>
-            <p>No notes yet. Click + to capture a thought.</p>
-        </div>`;
-        return;
-    }
-    container.innerHTML = '';
-    for (const n of state.notes) {
-        const title = n.title && n.title.trim() ? n.title : 'Untitled';
-        const row = document.createElement('div');
-        row.className = 'note-row';
-        if (state.currentNote && state.currentNote.id === n.id) row.classList.add('active');
-        row.innerHTML = `
-            <div class="note-row-title">${escapeHtml(title)}</div>
-            <div class="note-row-preview">${escapeHtml(previewContent(n.content_markdown))}</div>
-            <div class="note-row-time">${relativeTime(n.updated_at)}</div>
-        `;
-        row.addEventListener('click', () => openNote(n));
-        container.appendChild(row);
-    }
-}
-
-function escapeHtml(s) {
-    return (s || '').replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-}
-
-// --- Editor ---
-function clearEditor() {
-    state.currentNote = null;
-    state.editorDirty = false;
-    state.lastCleaned = null;
-    document.getElementById('noteTitle').value = '';
-    if (easyMDE) easyMDE.value('');
-    setSaveIndicator('');
-    setActiveButtonsDisabledState();
-}
-
-function openNote(note) {
-    cancelPendingSave();
-    state.currentNote = { ...note };
-    state.lastCleaned = null;
-    document.getElementById('noteTitle').value = note.title || '';
-    if (easyMDE) easyMDE.value(note.content_markdown || '');
-    state.editorDirty = false;
-    setSaveIndicator('');
-    renderList();
-    setActiveButtonsDisabledState();
-}
-
-function newNote() {
-    clearEditor();
-    document.getElementById('noteTitle').focus();
-}
-
-function hasNonEmptyContent() {
-    const title = document.getElementById('noteTitle').value.trim();
-    const content = (easyMDE ? easyMDE.value() : '').trim();
-    return title !== '' || content !== '';
-}
-
-function scheduleSave() {
-    cancelPendingSave();
-    setSaveIndicator('saving…');
-    state.saveTimer = setTimeout(flushSave, AUTOSAVE_DEBOUNCE_MS);
-}
-
-function cancelPendingSave() {
-    if (state.saveTimer) {
-        clearTimeout(state.saveTimer);
-        state.saveTimer = null;
-    }
-}
-
-async function flushSave() {
-    state.saveTimer = null;
-    if (!hasNonEmptyContent()) {
-        // Deferred persistence: nothing to persist yet.
-        setSaveIndicator('');
-        return;
-    }
-    const title = document.getElementById('noteTitle').value;
-    const content = easyMDE ? easyMDE.value() : '';
-    console.log('[save] flushSave — note id:', state.currentNote ? state.currentNote.id : '(new)', 'title:', JSON.stringify(title), 'content_len:', content.length, 'content:', JSON.stringify(content.slice(0, 120)));
-    try {
-        if (!state.currentNote) {
-            const created = await api('/api/notes', {
-                method: 'POST',
-                body: JSON.stringify({
-                    space_id: state.selectedSpaceId,
-                    title,
-                    content_markdown: content,
-                }),
-            });
-            state.currentNote = created;
-            await loadNotes();
-        } else {
-            const updated = await api(`/api/notes/${state.currentNote.id}`, {
-                method: 'PUT',
-                body: JSON.stringify({ title, content_markdown: content }),
-            });
-            console.log('[save] PUT resp:', updated ? {id: updated.id, content_len: updated.content_markdown?.length} : null);
-            state.currentNote = updated;
-            await loadNotes();
-        }
-        setSaveIndicator('saved');
-    } catch (e) {
-        console.error('[save] flushSave error:', e);
-        setSaveIndicator('save failed');
-    }
-}
-
-// beforeunload: if editor has non-empty content and no POST yet, the
-// debounced save may not have fired — flush it. Per PRD decision E, if both
-// title and content are empty and no POST issued, nothing persists.
-window.addEventListener('beforeunload', () => {
-    if (hasNonEmptyContent() && state.saveTimer) {
-        // Best-effort synchronous send; browsers may or may not complete it.
-        flushSave();
-    }
-});
-
-function setActiveButtonsDisabledState() {
-    // Add-as-task requires a selection (issue 004 wires the real handler).
-    const hasNote = !!state.currentNote;
-    const hasSelection = easyMDE && easyMDE.codemirror && easyMDE.codemirror.somethingSelected();
-    document.getElementById('cleanifyBtn').disabled = !hasNote;
-    document.getElementById('undoCleanifyBtn').disabled = !(hasNote && state.lastCleaned !== null);
-    document.getElementById('addTaskBtn').disabled = !(hasNote && hasSelection);
-    document.getElementById('deleteNoteBtn').disabled = !hasNote;
-}
-
-async function cleanifyCurrentNote() {
-    console.group('[cleanify] cleanifyCurrentNote start');
-    console.log('[cleanify] state.currentNote:', state.currentNote ? {id: state.currentNote.id, content_len: state.currentNote.content_markdown?.length} : null);
-    console.log('[cleanify] editor value BEFORE (len):', easyMDE ? easyMDE.value().length : '(no easyMDE)');
-    console.log('[cleanify] editor value BEFORE:', JSON.stringify(easyMDE ? easyMDE.value() : ''));
-    if (!state.currentNote) {
-        console.warn('[cleanify] BAIL: state.currentNote is null (silent no-op)');
-        console.groupEnd();
-        return;
-    }
-    const btn = document.getElementById('cleanifyBtn');
-    btn.disabled = true;
-    setSaveIndicator('cleanifying…');
-    try {
-        const resp = await api(`/api/notes/${state.currentNote.id}/cleanify`, { method: 'POST' });
-        console.log('[cleanify] POST resp:', resp);
-        console.log('[cleanify] resp.content type:', typeof (resp && resp.content), 'len:', resp && resp.content ? resp.content.length : 0);
-        console.log('[cleanify] resp.content:', JSON.stringify(resp && resp.content));
-        if (!resp || typeof resp.content !== 'string') {
-            setSaveIndicator('cleanify failed');
-            console.error('[cleanify] BAIL: invalid resp.content', resp);
-            console.groupEnd();
-            return;
-        }
-        // Store the current editor content for single-step Undo BEFORE replacing.
-        state.lastCleaned = easyMDE ? easyMDE.value() : '';
-        console.log('[cleanify] state.lastCleaned set (len):', state.lastCleaned ? state.lastCleaned.length : 0);
-        easyMDE.value(resp.content);
-        // easyMDE.value() fires the CM5 `change` event → scheduleSave() debounced PUT.
-        const afterSet = easyMDE ? easyMDE.value() : '';
-        console.log('[cleanify] editor value AFTER (len):', afterSet.length);
-        console.log('[cleanify] editor value AFTER:', JSON.stringify(afterSet));
-        console.log('[cleanify] editor matches resp.content?', afterSet === resp.content);
-        setSaveIndicator('cleanified');
-    } catch (e) {
-        console.error('[cleanify] exception:', e);
-        setSaveIndicator('cleanify failed');
-    } finally {
-        setActiveButtonsDisabledState();
-        console.log('[cleanify] cleanifyCurrentNote end — save timer pending:', !!state.saveTimer);
-        console.groupEnd();
-    }
-}
-
-function undoCleanify() {
-    if (state.lastCleaned === null) return;
-    const previous = state.lastCleaned;
-    state.lastCleaned = null;
-    easyMDE.value(previous);
-    // easyMDE.value() fires the CM5 `change` event → scheduleSave() debounced PUT.
-    setSaveIndicator('restored');
-    setActiveButtonsDisabledState();
-}
-
-async function deleteCurrentNote() {
-    if (!state.currentNote) return;
-    if (!confirm('Delete this note?')) return;
-    await api(`/api/notes/${state.currentNote.id}`, { method: 'DELETE' });
-    state.currentNote = null;
-    await loadNotes();
-    clearEditor();
-}
-
-// --- Promote-to-task (issue 005) ---
-// The task-creation modal `#addTaskModal` lives on the calendar page (/), not
-// on /notes, so a self-contained, JS-built confirm modal is used here. It is
-// pre-filled with the draft(s) returned by the promote route; confirming
-// creates the task(s) via the existing POST /api/tasks. The note's content is
-// never touched.
-
-function buildTaskForm(draft, spaces) {
-    const spaceOptions = spaces.map(sp =>
-        `<option value="${sp.id}" ${draft.space_id === sp.id ? 'selected' : ''}>${escapeHtml(sp.name)}</option>`
-    ).join('');
-    const deadlineVal = draft.deadline
-        ? String(draft.deadline).replace(' ', 'T').slice(0, 16)
-        : '';
-    return `
-        <div class="mb-2">
-            <label class="form-label small">Title</label>
-            <input class="form-control form-control-sm" data-field="title" value="${escapeHtml(draft.title || '')}">
-        </div>
-        <div class="row g-2 mb-2">
-            <div class="col">
-                <label class="form-label small">Priority (0–10)</label>
-                <input type="number" min="0" max="10" class="form-control form-control-sm" data-field="priority" value="${draft.priority ?? 0}">
-            </div>
-            <div class="col">
-                <label class="form-label small">Duration (min)</label>
-                <input type="number" min="1" class="form-control form-control-sm" data-field="estimated_duration" value="${draft.estimated_duration ?? 60}">
-            </div>
-        </div>
-        <div class="mb-2">
-            <label class="form-label small">Deadline</label>
-            <input type="datetime-local" class="form-control form-control-sm" data-field="deadline" value="${deadlineVal}">
-        </div>
-        <div class="mb-2">
-            <label class="form-label small">Space</label>
-            <select class="form-select form-select-sm" data-field="space_id">${spaceOptions}</select>
-        </div>
-        <div class="mb-2">
-            <label class="form-label small">Description</label>
-            <textarea class="form-control form-control-sm" rows="3" data-field="description">${escapeHtml(draft.description || '')}</textarea>
-        </div>
-    `;
-}
-
-function readForm(modalEl) {
-    const get = (f) => {
-        const el = modalEl.querySelector(`[data-field="${f}"]`);
-        return el ? el.value : '';
+    const state = {
+        initialized: false,
+        spaces: [],
+        selectedSpaceId: null,
+        notes: [],
+        currentNote: null,        // {id, ...} once persisted (POST issued); null until then
+        editorDirty: false,
+        saveTimer: null,
+        lastCleaned: null,        // for single-step Undo Cleanify
     };
-    const spaceId = Number(get('space_id')) || null;
-    const deadline = get('deadline') || null;
-    const priority = Number(get('priority')) || 0;
-    const estimated_duration = Number(get('estimated_duration')) || 60;
-    return {
-        title: get('title').trim(),
-        description: get('description') || null,
-        space_id: spaceId,
-        priority,
-        estimated_duration,
-        deadline,
-    };
-}
 
-function openPromoteTaskModal(draft, spaces) {
-    return new Promise((resolve, reject) => {
-        const backdrop = document.createElement('div');
-        backdrop.className = 'promote-task-backdrop';
-        backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1080;';
-        const card = document.createElement('div');
-        card.className = 'promote-task-card';
-        card.style.cssText = 'background:#fff;border-radius:.5rem;padding:1rem 1.25rem;width:min(520px,92vw);max-height:88vh;overflow:auto;';
-        card.innerHTML = `
-            <h6 class="mb-3">Confirm task</h6>
-            <form>${buildTaskForm(draft, spaces)}</form>
-            <div class="d-flex justify-content-end gap-2 mt-3">
-                <button type="button" class="btn btn-sm btn-secondary" data-act="cancel">Cancel</button>
-                <button type="button" class="btn btn-sm btn-primary" data-act="confirm">Create task</button>
-            </div>
-        `;
-        backdrop.appendChild(card);
-        document.body.appendChild(backdrop);
+    let easyMDE = null;
 
-        const close = () => backdrop.remove();
-        card.querySelector('[data-act="cancel"]').addEventListener('click', () => { close(); resolve(null); });
-        backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { close(); resolve(null); } });
-        card.querySelector('[data-act="confirm"]').addEventListener('click', async () => {
-            const body = readForm(card);
-            if (!body.title) { alert('Title is required'); return; }
-            const btn = card.querySelector('[data-act="confirm"]');
-            btn.disabled = true;
-            btn.textContent = 'Creating…';
-            try {
-                const resp = await fetch('/api/tasks', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    throw new Error(err.error || `HTTP ${resp.status}`);
-                }
-                close();
-                resolve(await resp.json());
-            } catch (e) {
-                btn.disabled = false;
-                btn.textContent = 'Create task';
-                alert('Failed to create task: ' + e.message);
-            }
-        });
-    });
-}
-
-async function promoteSelectionToTask() {
-    if (!state.currentNote || !easyMDE) return;
-    const sel = easyMDE.codemirror.getSelection();
-    if (!sel || !sel.trim()) return; // button should already be disabled; guard anyway
-
-    const btn = document.getElementById('addTaskBtn');
-    const origDisabled = btn.disabled;
-    btn.disabled = true;
-    setSaveIndicator('promoting…');
-    try {
-        const resp = await fetch(`/api/notes/${state.currentNote.id}/promote-to-task`, {
-            method: 'POST',
+    async function api(path, opts = {}) {
+        const resp = await fetch(path, {
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ selected_text: sel }),
+            ...opts,
         });
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            throw new Error(err.error || `HTTP ${resp.status}`);
+        if (resp.status === 204) return null;
+        return resp.json();
+    }
+
+    function setSaveIndicator(text) {
+        document.getElementById('saveIndicator').textContent = text || '';
+    }
+
+    // --- Spaces ---
+    async function loadSpaces() {
+        state.spaces = await api('/api/spaces');
+        const sel = document.getElementById('spaceSwitcher');
+        sel.innerHTML = '';
+        for (const sp of state.spaces) {
+            const opt = document.createElement('option');
+            opt.value = sp.id;
+            opt.textContent = sp.name;
+            sel.appendChild(opt);
         }
-        const drafts = await resp.json();
-        if (!Array.isArray(drafts) || drafts.length === 0) {
-            setSaveIndicator('no task drafted');
+        const saved = localStorage.getItem(STORAGE_SPACE_KEY);
+        const initial = saved && state.spaces.find(s => String(s.id) === saved)
+            ? Number(saved)
+            : (state.spaces[0] && state.spaces[0].id);
+        state.selectedSpaceId = initial;
+        sel.value = String(initial);
+    }
+
+    // --- Notes list ---
+    async function loadNotes() {
+        state.notes = await api(`/api/notes?space_id=${state.selectedSpaceId}`);
+        renderList();
+    }
+
+    function relativeTime(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        const diff = (Date.now() - d.getTime()) / 1000;
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        return `${Math.floor(diff / 86400)}d ago`;
+    }
+
+    function previewContent(content) {
+        if (!content) return '';
+        const firstLine = content.split('\n').find(l => l.trim()) || '';
+        return firstLine.length > CONTENT_PREVIEW_LEN
+            ? firstLine.slice(0, CONTENT_PREVIEW_LEN) + '…'
+            : firstLine;
+    }
+
+    function renderList() {
+        const container = document.getElementById('notes-container');
+        if (state.notes.length === 0) {
+            container.innerHTML = `<div class="text-center text-muted py-5">
+                <i class="fas fa-sticky-note fa-3x mb-3"></i>
+                <p>No notes yet. Click + to capture a thought.</p>
+            </div>`;
             return;
         }
-        // Single-draft path is the tested case. For multi-draft, confirm each
-        // in sequence (cancel stops the rest). The note is left untouched.
-        for (const draft of drafts) {
-            const created = await openPromoteTaskModal(draft, state.spaces);
-            if (!created) break; // user cancelled
+        container.innerHTML = '';
+        for (const n of state.notes) {
+            const title = n.title && n.title.trim() ? n.title : 'Untitled';
+            const row = document.createElement('div');
+            row.className = 'note-row';
+            if (state.currentNote && state.currentNote.id === n.id) row.classList.add('active');
+            row.innerHTML = `
+                <div class="note-row-title">${escapeHtml(title)}</div>
+                <div class="note-row-preview">${escapeHtml(previewContent(n.content_markdown))}</div>
+                <div class="note-row-time">${relativeTime(n.updated_at)}</div>
+            `;
+            row.addEventListener('click', () => openNote(n));
+            container.appendChild(row);
         }
-        setSaveIndicator('task created');
-    } catch (e) {
-        alert('Promote to task failed: ' + e.message);
-        setSaveIndicator('promote failed');
-    } finally {
-        btn.disabled = origDisabled;
-        setActiveButtonsDisabledState();
-        // CM5 keeps its selection across focus shifts; nothing to restore.
     }
-}
 
-// --- Init ---
-function initEditor() {
-    const textarea = document.getElementById('noteEditor');
-    easyMDE = new EasyMDE({
-        element: textarea,
-        autosave: { enabled: false },
-        status: false,
-        spellChecker: true,
-        toolbar: [
-            '|',
-            { name: 'add-task', action: promoteSelectionToTask,
-              className: 'fa fa-plus-square', title: 'Add as task' },
-            { name: 'cleanify', action: cleanifyCurrentNote,
-              className: 'fa fa-broom', title: 'Cleanify' },
-            { name: 'undo-cleanify', action: undoCleanify,
-              className: 'fa fa-undo', title: 'Undo Cleanify' },
-        ],
-    });
-    easyMDE.codemirror.on('change', (cm, changes) => {
-        console.log('[editor] change event origin=', changes && changes.origin, 'len=', cm.getValue().length);
-        state.editorDirty = true;
-        scheduleSave();
-        // Toggle Add-as-task enabled state from selection.
-        const btn = document.getElementById('addTaskBtn');
-        btn.disabled = !easyMDE.codemirror.somethingSelected();
-        // Toggle Undo-Cleanify enabled state based on stored previousContent.
-        const undoBtn = document.getElementById('undoCleanifyBtn');
-        undoBtn.disabled = !(state.currentNote && state.lastCleaned !== null);
-    });
-    // Pure cursor moves (no content edit) also change selection state.
-    easyMDE.codemirror.on('cursorActivity', () => {
-        const btn = document.getElementById('addTaskBtn');
-        btn.disabled = !(state.currentNote && easyMDE.codemirror.somethingSelected());
-    });
-}
+    function escapeHtml(s) {
+        return (s || '').replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
 
-function initWiring() {
-    document.getElementById('newNoteBtn').addEventListener('click', newNote);
-    document.getElementById('noteTitle').addEventListener('input', scheduleSave);
-    document.getElementById('cleanifyBtn').addEventListener('click', cleanifyCurrentNote);
-    document.getElementById('undoCleanifyBtn').addEventListener('click', undoCleanify);
-    document.getElementById('deleteNoteBtn').addEventListener('click', deleteCurrentNote);
-    document.getElementById('addTaskBtn').addEventListener('click', promoteSelectionToTask);
-    document.getElementById('logoutBtn').addEventListener('click', async () => {
-        await fetch('/logout', { method: 'POST' });
-        window.location.href = '/login';
-    });
-}
+    // --- Editor ---
+    function clearEditor() {
+        state.currentNote = null;
+        state.editorDirty = false;
+        state.lastCleaned = null;
+        document.getElementById('noteTitle').value = '';
+        if (easyMDE) easyMDE.value('');
+        setSaveIndicator('');
+        setActiveButtonsDisabledState();
+    }
 
-document.addEventListener('DOMContentLoaded', async () => {
-    initEditor();
-    initWiring();
-    await loadSpaces();
-    await loadNotes();
-    clearEditor();
-});
+    function openNote(note) {
+        cancelPendingSave();
+        state.currentNote = { ...note };
+        state.lastCleaned = null;
+        document.getElementById('noteTitle').value = note.title || '';
+        if (easyMDE) easyMDE.value(note.content_markdown || '');
+        state.editorDirty = false;
+        setSaveIndicator('');
+        renderList();
+        setActiveButtonsDisabledState();
+    }
+
+    function newNote() {
+        clearEditor();
+        document.getElementById('noteTitle').focus();
+    }
+
+    function hasNonEmptyContent() {
+        const title = document.getElementById('noteTitle').value.trim();
+        const content = (easyMDE ? easyMDE.value() : '').trim();
+        return title !== '' || content !== '';
+    }
+
+    function scheduleSave() {
+        cancelPendingSave();
+        setSaveIndicator('saving…');
+        state.saveTimer = setTimeout(flushSave, AUTOSAVE_DEBOUNCE_MS);
+    }
+
+    function cancelPendingSave() {
+        if (state.saveTimer) {
+            clearTimeout(state.saveTimer);
+            state.saveTimer = null;
+        }
+    }
+
+    async function flushSave() {
+        state.saveTimer = null;
+        if (!hasNonEmptyContent()) {
+            // Deferred persistence: nothing to persist yet.
+            setSaveIndicator('');
+            return;
+        }
+        const title = document.getElementById('noteTitle').value;
+        const content = easyMDE ? easyMDE.value() : '';
+        try {
+            if (!state.currentNote) {
+                const created = await api('/api/notes', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        space_id: state.selectedSpaceId,
+                        title,
+                        content_markdown: content,
+                    }),
+                });
+                state.currentNote = created;
+                await loadNotes();
+            } else {
+                const updated = await api(`/api/notes/${state.currentNote.id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ title, content_markdown: content }),
+                });
+                state.currentNote = updated;
+                await loadNotes();
+            }
+            setSaveIndicator('saved');
+        } catch (e) {
+            setSaveIndicator('save failed');
+        }
+    }
+
+    // beforeunload: if editor has non-empty content and no POST yet, the
+    // debounced save may not have fired — flush it. If both title and content
+    // are empty and no POST issued, nothing persists (deferred persistence).
+    window.addEventListener('beforeunload', () => {
+        if (state.initialized && hasNonEmptyContent() && state.saveTimer) {
+            // Best-effort synchronous send; browsers may or may not complete it.
+            flushSave();
+        }
+    });
+
+    function setActiveButtonsDisabledState() {
+        const hasNote = !!state.currentNote;
+        const hasSelection = easyMDE && easyMDE.codemirror && easyMDE.codemirror.somethingSelected();
+        document.getElementById('cleanifyBtn').disabled = !hasNote;
+        document.getElementById('undoCleanifyBtn').disabled = !(hasNote && state.lastCleaned !== null);
+        document.getElementById('notePromoteBtn').disabled = !(hasNote && hasSelection);
+        document.getElementById('deleteNoteBtn').disabled = !hasNote;
+    }
+
+    async function cleanifyCurrentNote() {
+        if (!state.currentNote) return;
+        const btn = document.getElementById('cleanifyBtn');
+        btn.disabled = true;
+        setSaveIndicator('cleanifying…');
+        try {
+            const resp = await api(`/api/notes/${state.currentNote.id}/cleanify`, { method: 'POST' });
+            if (!resp || typeof resp.content !== 'string') {
+                setSaveIndicator('cleanify failed');
+                return;
+            }
+            // Store the current editor content for single-step Undo BEFORE replacing.
+            state.lastCleaned = easyMDE ? easyMDE.value() : '';
+            easyMDE.value(resp.content);
+            // easyMDE.value() fires the CM5 `change` event → scheduleSave() debounced PUT.
+            setSaveIndicator('cleanified');
+        } catch (e) {
+            setSaveIndicator('cleanify failed');
+        } finally {
+            setActiveButtonsDisabledState();
+        }
+    }
+
+    function undoCleanify() {
+        if (state.lastCleaned === null) return;
+        const previous = state.lastCleaned;
+        state.lastCleaned = null;
+        easyMDE.value(previous);
+        // easyMDE.value() fires the CM5 `change` event → scheduleSave() debounced PUT.
+        setSaveIndicator('restored');
+        setActiveButtonsDisabledState();
+    }
+
+    async function deleteCurrentNote() {
+        if (!state.currentNote) return;
+        if (!confirm('Delete this note?')) return;
+        await api(`/api/notes/${state.currentNote.id}`, { method: 'DELETE' });
+        state.currentNote = null;
+        await loadNotes();
+        clearEditor();
+    }
+
+    // --- Promote-to-task ---
+    // The promote route returns draft DTOs and persists nothing; the shared
+    // TaskDraftModal confirms them and creates via POST /api/tasks. The
+    // note's content is never touched.
+
+    async function promoteSelectionToTask() {
+        if (!state.currentNote || !easyMDE) return;
+        const sel = easyMDE.codemirror.getSelection();
+        if (!sel || !sel.trim()) return; // button should already be disabled; guard anyway
+
+        const btn = document.getElementById('notePromoteBtn');
+        const origDisabled = btn.disabled;
+        btn.disabled = true;
+        setSaveIndicator('promoting…');
+        try {
+            const resp = await fetch(`/api/notes/${state.currentNote.id}/promote-to-task`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ selected_text: sel }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${resp.status}`);
+            }
+            const drafts = await resp.json();
+            if (!Array.isArray(drafts) || drafts.length === 0) {
+                setSaveIndicator('no task drafted');
+                return;
+            }
+            // Confirm each draft in sequence (cancel stops the rest).
+            const created = await window.TaskDraftModal.confirmDrafts(drafts, state.spaces);
+            setSaveIndicator(created ? 'task created' : '');
+            if (created && typeof window.loadTasks === 'function') window.loadTasks();
+        } catch (e) {
+            alert('Promote to task failed: ' + e.message);
+            setSaveIndicator('promote failed');
+        } finally {
+            btn.disabled = origDisabled;
+            setActiveButtonsDisabledState();
+        }
+    }
+
+    // --- Init ---
+    function initEditor() {
+        const textarea = document.getElementById('noteEditor');
+        easyMDE = new EasyMDE({
+            element: textarea,
+            autosave: { enabled: false },
+            status: false,
+            spellChecker: true,
+            toolbar: [
+                'bold', 'italic', 'strikethrough', '|',
+                'heading-1', 'heading-2', 'heading-3', '|',
+                'quote', 'unordered-list', 'ordered-list', '|',
+                'code', 'horizontal-rule', '|',
+                'link', 'image', '|',
+                'preview', 'side-by-side', '|',
+                { name: 'add-task', action: promoteSelectionToTask,
+                  className: 'fa fa-plus-square', title: 'Add as task' },
+                { name: 'cleanify', action: cleanifyCurrentNote,
+                  className: 'fa fa-broom', title: 'Cleanify' },
+                { name: 'undo-cleanify', action: undoCleanify,
+                  className: 'fa fa-undo', title: 'Undo Cleanify' },
+                '|', 'guide',
+            ],
+        });
+        easyMDE.codemirror.on('change', () => {
+            state.editorDirty = true;
+            scheduleSave();
+            setActiveButtonsDisabledState();
+        });
+        // Pure cursor moves (no content edit) also change selection state.
+        easyMDE.codemirror.on('cursorActivity', () => {
+            const btn = document.getElementById('notePromoteBtn');
+            btn.disabled = !(state.currentNote && easyMDE.codemirror.somethingSelected());
+        });
+    }
+
+    function initWiring() {
+        document.getElementById('newNoteBtn').addEventListener('click', newNote);
+        document.getElementById('noteTitle').addEventListener('input', scheduleSave);
+        document.getElementById('cleanifyBtn').addEventListener('click', cleanifyCurrentNote);
+        document.getElementById('undoCleanifyBtn').addEventListener('click', undoCleanify);
+        document.getElementById('deleteNoteBtn').addEventListener('click', deleteCurrentNote);
+        document.getElementById('notePromoteBtn').addEventListener('click', promoteSelectionToTask);
+        document.getElementById('spaceSwitcher').addEventListener('change', (e) => {
+            state.selectedSpaceId = Number(e.target.value);
+            localStorage.setItem(STORAGE_SPACE_KEY, String(state.selectedSpaceId));
+            loadNotes();
+        });
+    }
+
+    async function enter() {
+        if (!state.initialized) {
+            state.initialized = true;
+            initEditor();
+            initWiring();
+            await loadSpaces();
+            await loadNotes();
+            clearEditor();
+        } else {
+            // Space list may have changed while we were away.
+            const current = state.selectedSpaceId;
+            await loadSpaces();
+            if (state.spaces.find(s => s.id === current)) {
+                state.selectedSpaceId = current;
+                document.getElementById('spaceSwitcher').value = String(current);
+            }
+            await loadNotes();
+        }
+        // CodeMirror mis-measures when initialized while hidden.
+        if (easyMDE) easyMDE.codemirror.refresh();
+    }
+
+    return { enter };
+})();

@@ -1,30 +1,53 @@
-# Smart Task Calendar - ADHD-Friendly Task Manager
+# Simpler — Unified ADHD-Friendly Workspace
 
-A simple, fast, and intuitive web application designed specifically for people with ADHD to manage tasks and automatically schedule them on a calendar.
+A simple, fast, self-hosted workspace designed for people with ADHD: **tasks, calendar, notes, and mail in one page**, organized around shared *Spaces*, with AI-powered capture everywhere and automatic scheduling. One header, four destinations, everything a keystroke away.
 
 ## Features
 
-### Core Functionality
-- **AI-Powered Task Creation**: Simply paste text (emails, notes, etc.) and let AI extract task details
-- **Smart Scheduling**: Automatically schedules tasks based on priority, deadlines, and availability
-- **Task Freezing**: ctrl+click to freeze tasks or entire days to prevent rescheduling
-- **Visual Task Management**: Drag-and-drop task reordering and calendar scheduling
-- **External Calendar Integration**: Import events from Google Calendar, Outlook, and other ICS-compatible calendars
-- **Space-Based Scheduling**: Define time constraints for different contexts (work, study, personal projects, etc.)
-- **Change Logging**: Track all modifications for future learning and preferences
+### The unified shell
+- **One main header** with the destination nav (Tasks / Notes / Mail / Calendar / Spaces), a **global quick-capture input** (AI task creation from any view), and action buttons (auto-schedule, calendars, shortcuts help, logout)
+- **View switching without page reloads**: press `1` (Tasks) / `2` (Notes) / `3` (Mail) / `4` (Calendar) / `5` (Spaces), or click the tabs; deep links via `/#tasks`, `/#notes`, `/#mail`, `/#calendar`, `/#spaces`; the app reopens where you left it
+- **Coherent shortcuts everywhere** — press `?` in the app for the full list
 
-### User Interface
-- **Simple Layout**: 1/3 task list, 2/3 calendar view
-- **Priority-Based Ordering**: Tasks automatically sorted by urgency and deadline
-- **Drag-and-Drop**: Reorder tasks and reschedule calendar events easily
-- **Real-Time Updates**: Calendar reflects changes immediately
-- **Mobile Responsive**: Works on desktop, tablet, and mobile devices
+### Tasks (home) — kanban board
+- Four columns: **To do / Doing / Blocked / Done**; drag a card between columns to change its status (dragging into Done completes it)
+- **Space filter chips** on top — click a space to focus the whole board on it (remembered across sessions)
+- **Inline create** per column: `+` opens an input, `Enter` creates the task directly in that column (and in the filtered space); the input stays open for rapid entry
+- Compact cards: title, priority badge, space, deadline, duration, frozen indicator; the Done column shows the 30 most recently finished
+- The **Overview** subview (grouped-by-space dashboard with stats) is one toggle away and remembered; its **Show done** toggle lists finished tasks most-recently-finished first
+
+### Calendar
+- **AI-Powered Task Creation**: paste text (emails, notes, etc.) into the header input; the LLM extracts title, description, space, priority (0-10), deadline, and duration — multiple tasks from one paste when the text clearly contains several
+- **Smart Scheduling**: `Auto-Schedule` (or press `S`) places tasks in 30-minute slots by priority and deadline, respecting per-space time windows, external calendar events, and frozen tasks
+- **Task Freezing**: `Shift+Click` a task/event (or `Ctrl+Click` a day header for the whole day) to pin it so auto-schedule won't move it; dragging an event freezes it automatically (hold `Ctrl` while dropping to skip)
+- **External Calendar Integration**: Google Calendar, Outlook, or any ICS URL — fetched live, shown alongside your tasks, treated as busy time
+- **Everything is a gesture**: drag to reschedule, resize to change duration, `Ctrl+Click` to complete, click to edit
+
+### Notes
+- Space-scoped markdown notes (EasyMDE with the standard formatting toolbar — headings, lists, quote, code, links, preview, side-by-side) with **debounced autosave** and deferred persistence (no empty "Untitled" leftovers)
+- **Cleanify**: one click runs the messy note through the LLM and tidies it in place — with a persistent one-step Undo
+- **Promote to task**: select any text in a note → one click → AI drafts a task (pre-filled with the note's space) → confirm before it's saved
+
+### Mail
+- Register any number of **IMAP mailboxes**, each linked to a Space
+- **Passwords encrypted at rest** (Fernet, key derived from `SECRET_KEY`) and never returned by the API or shown in the UI again
+- Browse the inbox **live** (nothing is stored, messages stay unread) and **click any email to read it** — the full body opens in a reader, still without marking it read on the server
+- **Right-click an email → task** (also from the reader): the LLM derives the actual ask from the email, pre-tagged with the mailbox's Space; you confirm before anything is saved
+
+### Spaces
+- Full space management as its own destination (press `5`): name, description, per-weekday **time windows** (constrain auto-scheduling), and…
+- **AI context** — a free markdown field per space. Whatever you write there (current projects, people, what counts as urgent, conventions) is fed to the LLM alongside the system prompt on **every** AI task creation (quick capture, note promotion, email-to-task). It is explicitly framed as a *guide, not a source*: it steers space choice, priority, deadline, and wording, but is never copied into your tasks
+
+### Cross-cutting
+- **Spaces**: shared contexts (work / study / association / …); tasks, notes, and mailboxes all attach to them
+- **Change Logging**: every create/update/delete is audited with full before/after snapshots and an actor tag (user vs AI) — future fuel for preference learning
+- **Single shared password** (`APP_PASSWORD`) gates everything; no accounts to manage
 
 ## Quick Start with Docker
 
 ### Prerequisites
-- Docker and Docker Compose installed
-- Anthropic API key (for AI task parsing)
+- Docker and Docker Compose
+- An API key for any OpenAI-compatible LLM endpoint (OpenAI, Mistral, Infomaniak…) or Anthropic (for the AI features)
 
 ### Installation
 
@@ -39,12 +62,14 @@ cd simpler-smart-calendar
 cp .env.example .env
 ```
 
-3. Edit `.env` and set your configuration:
+3. Edit `.env` (see `.env.example` for all options):
 ```env
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-APP_PASSWORD=your_secure_password_here
 SECRET_KEY=your_random_secret_key_here
+APP_PASSWORD=your_secure_password_here
 FLASK_ENV=production
+AI_API_KEY=your_llm_api_key
+AI_API_BASE_URL=https://api.openai.com/v1/
+AI_MODEL=gpt-3.5-turbo
 ```
 
 4. Start the application:
@@ -52,272 +77,86 @@ FLASK_ENV=production
 docker-compose up -d
 ```
 
-5. Access the application at `http://localhost:5000`
+5. Access the application at `http://localhost:53000`
+
+### Upgrading an existing installation
+
+After pulling new code, migrate your database before restarting (additive-only, idempotent, never drops data):
+
+```bash
+python migrate_db.py --dry-run   # show what would change
+python migrate_db.py --yes       # apply schema diff + data backfills
+```
 
 ## Manual Installation
 
 ### Prerequisites
 - Python 3.11 or higher
-- pip
 
 ### Setup
 
-1. Clone the repository and navigate to it:
-```bash
-git clone <repository-url>
-cd simpler-smart-calendar
-```
-
-2. Create a virtual environment:
 ```bash
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
+source venv/bin/activate            # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env                # then edit it
+python src/app.py                   # http://localhost:53000
 ```
-
-4. Create a `.env` file:
-```bash
-cp .env.example .env
-```
-
-5. Edit `.env` and configure your settings
-
-6. Run the application:
-```bash
-python app.py
-```
-
-7. Access at `http://localhost:5000`
-
-## Usage Guide
-
-### Creating Tasks
-
-1. **Quick Create**: Type or paste your task description in the input area at the top
-2. **AI Parsing**: Click "Create Task with AI" to automatically extract:
-   - Task title
-   - Description
-   - Space/context
-   - Priority (0-10)
-   - Deadline
-   - Estimated duration
-
-### Managing Tasks
-
-- **Reorder**: Drag tasks up or down to change priority
-- **Edit**: Click on any task to edit details
-- **Complete**: Mark tasks as completed in the edit dialog
-- **Delete**: Remove tasks from the edit dialog
-
-### Auto-Scheduling
-
-1. Click "Auto-Schedule All" to automatically place tasks on your calendar
-2. The algorithm considers:
-   - Task priority (higher priority scheduled first)
-   - Deadlines (urgent tasks scheduled sooner)
-   - Space time constraints
-   - Existing calendar events
-
-### Calendar Management
-
-- **Drag Events**: Move scheduled tasks to different times
-- **Resize Events**: Adjust duration by dragging event edges
-- **Freeze Tasks**: Ctrl+Click on a task to freeze/unfreeze it (frozen tasks won't be moved by auto-schedule)
-- **Freeze Days**: Ctrl+Click on a day header (e.g., "Wed 12/17") to freeze/unfreeze all tasks on that day
-- **External Calendars**: Add Google/Outlook calendars via ICS URLs
-
-**Note**: Frozen tasks appear with a ❄️ snowflake icon and blue styling in both the task list and calendar.
-
-### Space Management
-
-1. Click "Manage Spaces" to view/edit contexts
-2. Define time constraints for each space:
-   - Example: "work" only on weekdays 9-5
-   - Example: "association" only Wednesday evenings
-3. Add descriptions to spaces to help AI understand context
-
-### Adding External Calendars
-
-1. Click "Add Calendar"
-2. Enter calendar name and ICS URL
-3. Get ICS URLs from:
-   - **Google Calendar**: Settings → Calendar Settings → Secret address in iCalendar format
-   - **Outlook**: Calendar → Share → ICS
 
 ## Configuration
 
 ### Environment Variables
 
-The application now supports multiple AI providers through a generic interface:
+| Variable | Description |
+|---|---|
+| `AI_API_KEY` | API key for your LLM provider (powers task parsing, Cleanify, and email-to-task) |
+| `AI_API_BASE_URL` | Any OpenAI-compatible endpoint, or `https://api.anthropic.com/` for Anthropic (auto-selected) |
+| `AI_MODEL` | e.g. `gpt-3.5-turbo`, `mistral-small`, `claude-haiku-4-5` |
+| `APP_PASSWORD` | The single shared password gating the app |
+| `SECRET_KEY` | Flask session secret — **also encrypts mailbox passwords**; rotating it means re-entering them |
+| `FLASK_ENV` | `development` or `production` |
 
-#### AI Provider Configuration (New)
+### Prompts
 
-- `AI_API_KEY`: API key for your chosen AI provider
-- `AI_API_BASE_URL`: Base URL for the AI API (default: `https://api.openai.com/v1/`)
-- `AI_MODEL`: Model name to use (default: `gpt-3.5-turbo`)
+The three AI system prompts are plain markdown files, loaded once at startup — edit and restart to customize:
+- `src/prompts/task_creation.md` — task parsing (the JSON formatting contract)
+- `src/prompts/notes_cleanify.md` — note tidying
+- `src/prompts/email_to_task.md` — email-to-task extraction
 
-**Supported Providers:**
-
-- **Anthropic Claude**: Set `AI_API_BASE_URL=https://api.anthropic.com/` and use models like `claude-haiku-4-5`
-- **Mistral**: Set `AI_API_BASE_URL=https://api.mistral.ai/v1/` and use models like `mistral-small`
-- **OpenAI**: Use default settings or set `AI_API_BASE_URL=https://api.openai.com/v1/` with models like `gpt-3.5-turbo`
-- **Other OpenAI-compatible APIs**: Set the appropriate base URL and model
-
-#### Legacy Configuration (Backward Compatible)
-
-- `ANTHROPIC_API_KEY`: Still supported for backward compatibility (will be used if `AI_API_KEY` is not set)
-- `APP_PASSWORD`: Single password to access the application
-- `SECRET_KEY`: Secret key for Flask sessions (generate a random string)
-- `FLASK_ENV`: Set to `production` for production deployment
+Per-space **AI context** (edited live in the Spaces view, no restart needed) is appended to the task-drafting prompts automatically.
 
 ### Default Spaces
 
-The app comes with three default spaces:
-- **work**: Monday-Friday, 9:00-17:00
-  - Description: Work-related tasks, meetings, and projects during office hours
-- **study**: No time constraints
-  - Description: Learning activities, courses, homework, and educational tasks
-- **association**: Wednesday, 18:00-22:00
-  - Description: Community group, club, or volunteer organization activities
+Seeded on first run (editable in the UI): **work** (Mon-Fri 9-17), **study** (unconstrained), **association** (Wed 18-22).
 
-You can modify or add more spaces through the UI.
+## API
 
-### Migrating from Previous Versions
-
-#### Task Freezing Feature (Latest Update)
-
-If you're upgrading to the version with task freezing support, run the migration script:
-
-```bash
-python migration.py
-```
-
-This will:
-- Add the `frozen` column to your tasks table
-- Set all existing tasks to unfrozen (frozen=False)
-- Create a backup of your database before migration
-
-After migration, you can:
-- **Ctrl+Click** on any task in the calendar to freeze/unfreeze it
-- **Ctrl+Click** on a day header to freeze/unfreeze all tasks on that day
-- Frozen tasks won't move when you run auto-schedule
-
-#### Locations to Spaces Migration
-
-If you're upgrading from a version that used "Locations" instead of "Spaces", run the migration script before starting the updated application:
-
-```bash
-python migrate_locations_to_spaces.py
-```
-
-This will:
-- Rename the `locations` table to `spaces`
-- Rename the `location` column in tasks to `space`
-- Add the `description` column to spaces
-- Create a backup of your database before migration
-
-### AI Task Parsing
-
-The AI task parsing is powered by Anthropic's Claude 4.5 Haiku model. The system prompt is stored in `prompt.md` and loaded once on application startup. This makes it easy to customize the AI's behavior without modifying code:
-
-1. Edit `prompt.md` to adjust how tasks are parsed
-2. Restart the application to load the updated prompt
-3. The prompt includes guidelines for extracting titles, spaces, priorities, deadlines, and durations
-
-## API Endpoints
-
-### Tasks
-- `GET /api/tasks` - Get all tasks
-- `POST /api/tasks` - Create a new task
-- `POST /api/tasks/parse` - Parse text and create task with AI
-- `PUT /api/tasks/<id>` - Update a task
-- `DELETE /api/tasks/<id>` - Delete a task
-- `POST /api/tasks/reorder` - Reorder tasks
-- `POST /api/tasks/<id>/toggle-freeze` - Toggle freeze status for a task
-- `POST /api/tasks/freeze-day` - Freeze/unfreeze all tasks on a specific day
-
-### Scheduling
-- `POST /api/schedule` - Auto-schedule all tasks
-
-### Spaces
-- `GET /api/spaces` - Get all spaces
-- `POST /api/spaces` - Create a space
-- `PUT /api/spaces/<id>` - Update a space
-- `DELETE /api/spaces/<id>` - Delete a space
-
-### Calendar Sources
-- `GET /api/calendar-sources` - Get all calendar sources
-- `POST /api/calendar-sources` - Add a calendar source
-- `DELETE /api/calendar-sources/<id>` - Remove a calendar source
-- `GET /api/external-events` - Get events from external calendars
-
-### Logs
-- `GET /api/logs` - Get change logs
-
-## Architecture
-
-### Backend
-- **Flask**: Web framework
-- **SQLite**: Database for tasks, spaces, and logs
-- **Anthropic Claude**: AI-powered task parsing (using Claude 4.5 Haiku)
-- **icalendar**: ICS calendar parsing
-
-### Frontend
-- **Bootstrap 5**: UI framework
-- **FullCalendar**: Calendar component
-- **SortableJS**: Drag-and-drop functionality
-- **Vanilla JavaScript**: No heavy frameworks for fast performance
-
-### Database Schema
-
-- **tasks**: Store task information, priorities, deadlines, schedules, and associated space
-- **spaces**: Define contexts (work, study, etc.) with descriptions and time constraints
-- **change_logs**: Track all user modifications
-- **calendar_sources**: Store external calendar ICS URLs
+See [PROJECT_DESCRIPTION.md](PROJECT_DESCRIPTION.md) for the full schema and endpoint reference (tasks, parse, schedule, spaces, notes, cleanify, promote-to-task, mailboxes, messages, email-to-task, calendar sources, logs).
 
 ## Development
 
 ### Running Tests
+
 ```bash
-# Coming soon
-pytest
+python -m pytest -q     # 57 route-layer + scheduler tests
 ```
 
 ### Building Docker Image
 ```bash
-docker build -t smart-task-calendar .
+docker build -t simpler-workspace .
 ```
 
 ### Contributions
-Contributions are welcome! Please feel free to submit issues and pull requests.
+Contributions are welcome! Please feel free to submit issues and pull requests. Agent/contributor context lives in `.opencode/context/`.
 
 ## Roadmap
 
-### Future Features
-- Audio recording support for task creation
-- File attachment support
-- Preferences learning from change logs
-- Multi-user support
-- Mobile app (iOS/Android)
-- Desktop app (Electron)
-- Natural language scheduling ("schedule this for tomorrow morning")
-- Recurring tasks
-- Task templates
-- Collaboration features
-- Integration with more calendar services
+See [TODO.md](TODO.md). Highlights: global user config (breaks, default work times), calendar click/drag-to-create, timespan reservation per space, audio capture, markdown rendering for notes, habit learning from the change log.
 
 ## License
 
-[LICENSE](./LICENSE)
-
-## Support
-
-For issues and questions, please open an issue on GitHub.
+[LICENSE](../LICENSE)
 
 ## Credits
 
-Built with ADHD users in mind - designed to be as simple and fast as possible to reduce friction in task management.
+Built with ADHD users in mind — designed to be as simple and fast as possible to reduce friction in task management.

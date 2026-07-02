@@ -1,28 +1,31 @@
 # Scheduling
 
-> Algorithm in `src/scheduler.py`. Entry point `schedule_tasks(tasks, external_events, space_constraints)`.
+> Algorithm in `src/scheduler.py`. Entry point `schedule_tasks(tasks, external_events, space_constraints, now=None)`. **Pure over plain data** — no ORM knowledge (architecture review candidate 2, applied 2026-07).
 
 ## Inputs
-- `tasks`: list of `Task` model objects ( SQLAlchemy instances) — caller passes non-completed tasks.
-- `external_events`: list of `{start, end}` datetime dicts from `fetch_external_events` + any pre-scheduled external calendar items.
-- `space_constraints`: dict mapping **space name** (not id) → time-constraint list (from `Space.get_time_constraints()`).
+- `tasks`: list of **SchedulableTask dicts** (see `to_schedulable(task)` — the adapter routes use to convert ORM `Task` rows at the seam). Fields: `id, space_id, priority, deadline, created_at, estimated_duration, frozen, scheduled_start, scheduled_end`. Caller passes non-completed tasks.
+- `external_events`: list of `{start, end}` datetime dicts from `fetch_external_events`.
+- `space_constraints`: dict mapping **space id** → time-constraint list (from `Space.get_time_constraints()`). The scheduler never sees space names.
+- `now`: injectable clock for tests; defaults to `datetime.now()`.
 
 ## Algorithm
 1. **Split**: frozen tasks (with both `scheduled_start` and `scheduled_end`) are treated as immutable busy slots; non-frozen tasks are candidates for placement.
 2. **Sort** non-frozen by `(-priority, deadline or datetime.max, created_at)` — highest priority first, then nearest deadline, then FIFO.
-3. **Grid anchor**: `current_time = round_to_next_30min(datetime.now())` — all slots align to 30-minute boundaries.
+3. **Grid anchor**: `current_time = round_to_next_30min(now)` — all slots align to 30-minute boundaries.
 4. **Busy pool**: seed with external events + frozen-task windows, then each newly placed task appends its slot and the pool is re-sorted by start.
-5. **Placement**: for each task, `find_next_available_slot` walks forward from `current_time` (or deadline-aware start) in 30-min steps, skipping slots that overlap any busy entry or fall outside the task's space time constraints (`is_within_space_constraints`, `get_next_valid_time_for_space`). Duration defaults to 60 minutes when `estimated_duration` is falsy.
+5. **Placement**: for each task, `find_next_available_slot` walks forward from `current_time` in 30-min steps, skipping slots that overlap any busy entry or fall outside the task's space time constraints (`is_within_space_constraints`, `get_next_valid_time_for_space`). Duration defaults to 60 minutes when `estimated_duration` is falsy.
 
 ## Key helpers
+- `to_schedulable(task)` — ORM (or any attr-bearing object) → plain dict; the ONLY place that knows the field list (`SCHEDULABLE_FIELDS`).
 - `round_to_next_30min(dt)` — ceil to next :00 or :30.
 - `slots_overlap(a_start, a_end, b_start, b_end)` — busy-slot intersection test.
-- `is_within_space_constraints(dt, space_name, constraints)` — is `dt` inside any allowed window for that space.
-- `get_next_valid_time_for_space(dt, space_name, constraints)` — jump forward to the next slot that satisfies the space's windows.
-- `find_next_available_slot(start, duration, busy_slots, space_name, constraints, deadline)` — the main search loop.
+- `is_within_space_constraints(start, end, space_id, constraints)` / `get_next_valid_time_for_space(dt, space_id, constraints)` — space-window logic, keyed by id.
+- `find_next_available_slot(start, duration, busy_slots, space_id, constraints, deadline)` — the main search loop.
+
+## Tests
+`tests/test_scheduler.py` — hand-built dicts, no DB: priority ordering, busy-slot avoidance, frozen-task pinning, space-constraint windows, impossible deadlines, the adapter shape. This is the regression net for the open "not all tasks planned" investigation (`doc/TODO.md`).
 
 ## Caveats
-- **No timezone handling**: all datetimes are naive server-local. `calendar_integration` strips tzinfo from ICS events; `app.parse_iso_datetime` strips the `Z` (legacy UTC) without conversion. Frontend sends local-naive datetimes.
-- **`Task.space` (legacy string) is used by the scheduler**, not `space_id` — `app.py` builds `space_constraints` keyed by space name (via `space_rel.name` fallback). Keep that name lookup intact when refactoring.
-- **Deadline is a soft input** to slot search, not a hard constraint — a task may still be scheduled after its deadline if no earlier slot is free.
+- **No timezone handling**: all datetimes are naive server-local. `calendar_integration` strips tzinfo from ICS events; `datetime_utils.parse_iso_datetime` strips the `Z` (legacy UTC) without conversion. Frontend sends local-naive datetimes.
+- **Deadline is a hard search bound**: `max_search_time = deadline - duration`, so a task whose deadline can't be met is left **unscheduled** (returned list simply omits it) — this is one suspected cause of "not all tasks planned".
 - **Re-schedule scope**: there is no per-task reschedule endpoint; clients call `POST /api/schedule` to re-plan all non-frozen tasks at once. Filters ("reschedule only current filter") are a TODO.

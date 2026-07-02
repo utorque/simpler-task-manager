@@ -3,160 +3,405 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simpler: Smart Task Calendar</title>
+    <title>Simpler: ADHD-Friendly Workspace</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
     <link href="/static/css/style.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container-fluid h-100">
-        <div class="row h-100">
-            <!-- Left Panel: Task List (1/3) -->
-            <div class="col-md-4 task-panel">
-                <div class="panel-header">
-                    <h3 class="mb-3">Task Manager</h3>
-                    <div class="d-flex gap-2">
-                        <a href="/notes" class="btn btn-sm btn-outline-primary" title="Notes">
-                            <i class="fas fa-sticky-note"></i> Notes
-                        </a>
-                        <button class="btn btn-sm btn-outline-secondary" id="logoutBtn">
-                            <i class="fas fa-sign-out-alt"></i> Logout
-                        </button>
-                    </div>
-                </div>
+    <!-- ===== One main header: nav + quick capture + actions ===== -->
+    <header class="app-header">
+        <div class="app-brand" title="Simpler">
+            <i class="fas fa-bolt"></i><span class="app-brand-name">Simpler</span>
+        </div>
+        <nav class="app-nav" id="appNav">
+            <button class="nav-tab" data-destination="tasks" title="Tasks — press 1">
+                <i class="fas fa-columns"></i> Tasks <kbd>1</kbd>
+            </button>
+            <button class="nav-tab" data-destination="notes" title="Notes — press 2">
+                <i class="fas fa-sticky-note"></i> Notes <kbd>2</kbd>
+            </button>
+            <button class="nav-tab" data-destination="mail" title="Mail — press 3">
+                <i class="fas fa-envelope"></i> Mail <kbd>3</kbd>
+            </button>
+            <button class="nav-tab" data-destination="calendar" title="Calendar — press 4">
+                <i class="fas fa-calendar"></i> Calendar <kbd>4</kbd>
+            </button>
+            <button class="nav-tab" data-destination="spaces" title="Spaces — press 5">
+                <i class="fas fa-map-marker-alt"></i> Spaces <kbd>5</kbd>
+            </button>
+        </nav>
+        <!-- Global quick capture: reachable from every view, zero clicks -->
+        <div class="quick-capture">
+            <input type="text" class="form-control" id="quickCapture"
+                   placeholder="Capture a task… paste anything (press / to focus, Ctrl+Enter to create)">
+            <button class="btn btn-primary" id="parseTaskBtn" title="Create task with AI (Ctrl+Enter)">
+                <i class="fas fa-magic"></i>
+            </button>
+        </div>
+        <div class="app-actions">
+            <button class="btn app-action-btn" id="scheduleBtn" title="Auto-schedule all — press S">
+                <i class="fas fa-calendar-check"></i>
+            </button>
+            <button class="btn app-action-btn" id="addCalendarBtn" title="Manage calendars">
+                <i class="fas fa-link"></i>
+            </button>
+            <button class="btn app-action-btn" id="helpBtn" title="Keyboard shortcuts — press ?">
+                <i class="fas fa-keyboard"></i>
+            </button>
+            <button class="btn app-action-btn" id="logoutBtn" title="Logout">
+                <i class="fas fa-sign-out-alt"></i>
+            </button>
+        </div>
+    </header>
 
-                <!-- Task Input Area -->
-                <div class="task-input-area mb-4">
-                    <textarea
-                        class="form-control mb-2"
-                        id="taskInput"
-                        rows="3"
-                        placeholder="Paste your email, describe your task, or just write what you need to do..."></textarea>
-                    <button class="btn btn-primary w-100" id="parseTaskBtn">
-                        <i class="fas fa-magic"></i> Create Task with AI
+    <main class="app-main">
+        <!-- ===== Tasks destination (home): kanban board + overview toggle ===== -->
+        <section id="view-tasks" class="app-view">
+            <div class="tasks-toolbar">
+                <div class="space-chips" id="spaceChips"></div>
+                <div class="view-tabs">
+                    <button class="view-tab" id="boardTab" onclick="switchTasksSubview('board')">
+                        <i class="fas fa-columns"></i> Board
                     </button>
-                </div>
-
-                <!-- Quick Actions -->
-                <div class="quick-actions mb-3">
-                    <button class="btn btn-success btn-sm" id="scheduleBtn">
-                        <i class="fas fa-calendar-check"></i> Auto-Schedule All
+                    <button class="view-tab" id="overviewTab" onclick="switchTasksSubview('overview')">
+                        <i class="fas fa-chart-pie"></i> Overview
                     </button>
-                    <button class="btn btn-info btn-sm" id="addSpaceBtn">
-                        <i class="fas fa-map-marker-alt"></i> Manage Spaces
-                    </button>
-                    <button class="btn btn-secondary btn-sm" id="addCalendarBtn">
-                        <i class="fas fa-link"></i> Manage Calendars
-                    </button>
-                </div>
-
-                <!-- Task List Header -->
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="mb-0 text-muted">Tasks</h6>
-                    <button
-                        class="btn btn-sm btn-outline-secondary"
-                        id="toggleCompletedBtn"
-                        onclick="toggleShowCompleted()"
-                        title="Show completed tasks">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                </div>
-
-                <!-- Task List -->
-                <div class="task-list" id="taskList">
-                    <div class="text-center text-muted py-5">
-                        <i class="fas fa-clipboard-list fa-3x mb-3"></i>
-                        <p>No tasks yet. Create your first task above!</p>
-                    </div>
                 </div>
             </div>
 
-            <!-- Right Panel: Calendar/Overview (2/3) -->
-            <div class="col-md-8 calendar-panel">
-                <div class="panel-header">
-                    <h3 id="viewTitle">Overview</h3>
-                    <div class="panel-header-right">
-                        <div class="calendar-legend" id="calendarLegend" style="display: none;">
-                            <span class="legend-item">
-                                <span class="badge bg-primary">My Tasks</span>
-                            </span>
-                            <span class="legend-item">
-                                <span class="badge bg-secondary">External Events</span>
-                            </span>
+            <!-- Kanban board -->
+            <div id="boardView" class="board">
+                <div class="board-col" data-status="todo">
+                    <div class="board-col-header">
+                        <span class="board-col-title"><i class="fas fa-inbox"></i> To do</span>
+                        <span class="board-col-count" id="count-todo"></span>
+                        <button class="board-col-add" data-status="todo" title="Add task here (Enter to save, Esc to cancel)">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div class="board-inline-add" data-status="todo" style="display:none;">
+                        <input type="text" class="form-control form-control-sm" placeholder="Task title… Enter ↵">
+                    </div>
+                    <div class="board-col-cards" id="col-todo" data-status="todo"></div>
+                </div>
+                <div class="board-col" data-status="doing">
+                    <div class="board-col-header">
+                        <span class="board-col-title"><i class="fas fa-play"></i> Doing</span>
+                        <span class="board-col-count" id="count-doing"></span>
+                        <button class="board-col-add" data-status="doing" title="Add task here (Enter to save, Esc to cancel)">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div class="board-inline-add" data-status="doing" style="display:none;">
+                        <input type="text" class="form-control form-control-sm" placeholder="Task title… Enter ↵">
+                    </div>
+                    <div class="board-col-cards" id="col-doing" data-status="doing"></div>
+                </div>
+                <div class="board-col" data-status="blocked">
+                    <div class="board-col-header">
+                        <span class="board-col-title"><i class="fas fa-hand-paper"></i> Blocked</span>
+                        <span class="board-col-count" id="count-blocked"></span>
+                        <button class="board-col-add" data-status="blocked" title="Add task here (Enter to save, Esc to cancel)">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div class="board-inline-add" data-status="blocked" style="display:none;">
+                        <input type="text" class="form-control form-control-sm" placeholder="Task title… Enter ↵">
+                    </div>
+                    <div class="board-col-cards" id="col-blocked" data-status="blocked"></div>
+                </div>
+                <div class="board-col board-col-done" data-status="done">
+                    <div class="board-col-header">
+                        <span class="board-col-title"><i class="fas fa-check"></i> Done</span>
+                        <span class="board-col-count" id="count-done"></span>
+                    </div>
+                    <div class="board-col-cards" id="col-done" data-status="done"></div>
+                </div>
+            </div>
+
+            <!-- Overview (grouped by space, kept as the secondary view) -->
+            <div id="overviewView" style="display: none;">
+                <div class="d-flex justify-content-end mb-2">
+                    <button class="btn btn-sm btn-outline-secondary" id="overviewDoneToggle"
+                            onclick="toggleOverviewDone()" title="Show/hide finished tasks">
+                        <i class="fas fa-check"></i> Show done
+                    </button>
+                </div>
+                <div id="overviewDoneSection" class="mb-4" style="display: none;">
+                    <h6 class="text-muted mb-2"><i class="fas fa-check-double"></i> Done — most recently finished first</h6>
+                    <div id="overviewDoneList" class="overview-done-list"></div>
+                </div>
+                <div class="overview-stats mb-4">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-icon"><i class="fas fa-tasks"></i></div>
+                                <div class="stat-content">
+                                    <div class="stat-label">Total Tasks</div>
+                                    <div class="stat-value" id="statTotalTasks">0</div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="view-tabs">
-                            <button class="view-tab" id="calendarTab" onclick="switchView('calendar')">
-                                <i class="fas fa-calendar"></i> Calendar
-                            </button>
-                            <button class="view-tab active" id="overviewTab" onclick="switchView('overview')">
-                                <i class="fas fa-chart-pie"></i> Overview
-                            </button>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-icon"><i class="fas fa-clock"></i></div>
+                                <div class="stat-content">
+                                    <div class="stat-label">Hours Planned</div>
+                                    <div class="stat-value" id="statHoursPlanned">0</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-icon"><i class="fas fa-calendar-check"></i></div>
+                                <div class="stat-content">
+                                    <div class="stat-label">Scheduled</div>
+                                    <div class="stat-value" id="statScheduled">0</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-icon"><i class="fas fa-exclamation-circle"></i></div>
+                                <div class="stat-content">
+                                    <div class="stat-label">Urgent</div>
+                                    <div class="stat-value" id="statUrgent">0</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
+                <div id="spaceCardsContainer" class="space-cards-container"></div>
+            </div>
+        </section>
 
-                <!-- Calendar View -->
-                <div id="calendarView" class="view-content" style="display: none;">
+        <!-- ===== Calendar destination (preserved as-is: sidebar task list + FullCalendar) ===== -->
+        <section id="view-calendar" class="app-view" style="display: none;">
+            <div class="calendar-layout">
+                <aside class="calendar-sidebar">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 text-muted">Tasks</h6>
+                        <button
+                            class="btn btn-sm btn-outline-secondary"
+                            id="toggleCompletedBtn"
+                            onclick="toggleShowCompleted()"
+                            title="Show completed tasks">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                    <div class="task-list" id="taskList">
+                        <div class="text-center text-muted py-5">
+                            <i class="fas fa-clipboard-list fa-3x mb-3"></i>
+                            <p>No tasks yet. Create your first task above!</p>
+                        </div>
+                    </div>
+                </aside>
+                <div class="calendar-main">
+                    <div class="calendar-legend mb-2" id="calendarLegend">
+                        <span class="legend-item"><span class="badge bg-primary">My Tasks</span></span>
+                        <span class="legend-item"><span class="badge bg-secondary">External Events</span></span>
+                        <span class="legend-item text-muted small">Ctrl+Click event = done · Shift+Click = freeze · Ctrl+Click day header = freeze day</span>
+                    </div>
                     <div id="calendar"></div>
                 </div>
+            </div>
+        </section>
 
-                <!-- Overview View -->
-                <div id="overviewView" class="view-content">
-                    <!-- Stats Section -->
-                    <div class="overview-stats mb-4">
-                        <div class="row g-3">
-                            <div class="col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon">
-                                        <i class="fas fa-tasks"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <div class="stat-label">Total Tasks</div>
-                                        <div class="stat-value" id="statTotalTasks">0</div>
-                                    </div>
-                                </div>
+        <!-- ===== Notes destination ===== -->
+        <section id="view-notes" class="app-view" style="display: none;">
+            <div class="notes-layout">
+                <aside class="notes-list-panel">
+                    <div class="d-flex gap-2 align-items-center mb-2">
+                        <select id="spaceSwitcher" class="form-select form-select-sm" style="width:auto;"></select>
+                        <button class="btn btn-sm btn-success" id="newNoteBtn" title="New note (N)">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div class="notes-container" id="notes-container">
+                        <div class="text-center text-muted py-5" id="notesEmpty">
+                            <i class="fas fa-sticky-note fa-3x mb-3"></i>
+                            <p>No notes yet. Click + to capture a thought.</p>
+                        </div>
+                    </div>
+                </aside>
+                <div class="notes-editor-panel">
+                    <div class="notes-editor-header">
+                        <input type="text" id="noteTitle" class="form-control" placeholder="Title (optional)">
+                        <span id="saveIndicator" class="ms-2 small text-muted"></span>
+                    </div>
+                    <textarea id="noteEditor"></textarea>
+                    <div class="mt-2 d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-primary" id="notePromoteBtn" disabled title="Select text first">
+                            <i class="fas fa-plus-square"></i> Add as task
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning" id="cleanifyBtn" disabled title="Cleanify this note">
+                            <i class="fas fa-broom"></i> Cleanify
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" id="undoCleanifyBtn" disabled title="Undo the last Cleanify">
+                            <i class="fas fa-undo"></i> Undo Cleanify
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger ms-auto" id="deleteNoteBtn" disabled>
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- ===== Mail destination ===== -->
+        <section id="view-mail" class="app-view" style="display: none;">
+            <div class="mail-layout">
+                <aside class="mail-sidebar">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 text-muted">Mailboxes</h6>
+                        <button class="btn btn-sm btn-success" id="addMailboxBtn" title="Add mailbox">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div id="mailboxList"></div>
+                </aside>
+                <div class="mail-main">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshMailBtn" title="Refresh inbox">
+                            <i class="fas fa-rotate"></i>
+                        </button>
+                        <span id="mailStatus" class="small text-muted"></span>
+                        <span class="small text-muted ms-auto">Click an email to read it · right-click (or <i class="fas fa-plus-square"></i>) → task</span>
+                    </div>
+                    <div id="mailMessages"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== Spaces destination: manage spaces + their AI context ===== -->
+        <section id="view-spaces" class="app-view" style="display: none;">
+            <div class="spaces-layout">
+                <aside class="spaces-list-panel">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 text-muted">Spaces</h6>
+                        <button class="btn btn-sm btn-success" id="newSpaceBtn" title="New space">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div id="spacesList"></div>
+                </aside>
+                <div class="spaces-editor-panel">
+                    <div id="spaceEditorEmpty" class="text-center text-muted py-5">
+                        <i class="fas fa-map-marker-alt fa-3x mb-3"></i>
+                        <p>Select a space — or create one with +.</p>
+                    </div>
+                    <div id="spaceEditor" style="display: none;">
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Name *</label>
+                                <input type="text" class="form-control" id="spaceEditName" placeholder="e.g., work, hobby, project">
                             </div>
-                            <div class="col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon">
-                                        <i class="fas fa-clock"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <div class="stat-label">Hours Planned</div>
-                                        <div class="stat-value" id="statHoursPlanned">0</div>
-                                    </div>
-                                </div>
+                            <div class="col">
+                                <label class="form-label">Description <span class="text-muted small">(one line — helps the AI pick this space)</span></label>
+                                <input type="text" class="form-control" id="spaceEditDescription" placeholder="What this space is for">
                             </div>
-                            <div class="col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon">
-                                        <i class="fas fa-calendar-check"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <div class="stat-label">Scheduled</div>
-                                        <div class="stat-value" id="statScheduled">0</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon">
-                                        <i class="fas fa-exclamation-circle"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <div class="stat-label">Urgent</div>
-                                        <div class="stat-value" id="statUrgent">0</div>
-                                    </div>
-                                </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">AI context <span class="text-muted small">(markdown — guides AI task creation; used as a guide, never copied into tasks)</span></label>
+                            <textarea class="form-control space-context-editor" id="spaceEditContext" rows="12"
+                                      placeholder="Background the AI should know when drafting tasks for this space: current projects, people, conventions, what counts as urgent…"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Time constraints <span class="text-muted small">(when auto-schedule may place this space's tasks; none = anytime)</span></label>
+                            <div id="spaceEditConstraints"></div>
+                            <button class="btn btn-sm btn-outline-secondary mt-2" id="spaceAddConstraintBtn">
+                                <i class="fas fa-plus"></i> Add time window
+                            </button>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <button class="btn btn-primary" id="spaceSaveBtn"><i class="fas fa-check"></i> Save</button>
+                            <span id="spaceSaveIndicator" class="small text-muted"></span>
+                            <button class="btn btn-outline-danger ms-auto" id="spaceDeleteBtn"><i class="fas fa-trash"></i> Delete space</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Mail Message Reader Modal -->
+    <div class="modal fade" id="mailMessageModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="mailMessageSubject"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mail-message-headers mb-3">
+                        <div><span class="text-muted">From:</span> <span id="mailMessageFrom"></span></div>
+                        <div><span class="text-muted">Date:</span> <span id="mailMessageDate"></span></div>
+                    </div>
+                    <pre class="mail-message-body" id="mailMessageBody"></pre>
+                </div>
+                <div class="modal-footer">
+                    <span class="small text-muted me-auto">Read-only: opening here never marks it read on the server</span>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="mailMessageAddTaskBtn">
+                        <i class="fas fa-plus-square"></i> Add as task
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mailbox Add/Edit Modal -->
+    <div class="modal fade" id="mailboxModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="mailboxModalTitle">Add Mailbox</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="mailboxId">
+                    <div class="mb-3">
+                        <label class="form-label">Label</label>
+                        <input type="text" class="form-control" id="mailboxLabel" placeholder="Work inbox">
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label">IMAP host</label>
+                            <input type="text" class="form-control" id="mailboxHost" placeholder="imap.example.com">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">Port</label>
+                            <input type="number" class="form-control" id="mailboxPort" value="993">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Username</label>
+                        <input type="text" class="form-control" id="mailboxUsername" placeholder="you@example.com" autocomplete="off">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-control" id="mailboxPassword" autocomplete="new-password">
+                        <div class="form-text">Stored encrypted; never shown again. Use an app password if your provider supports them.</div>
+                    </div>
+                    <div class="row g-2 mb-3 align-items-end">
+                        <div class="col">
+                            <label class="form-label">Linked space</label>
+                            <select class="form-select" id="mailboxSpace"></select>
+                            <div class="form-text">Tasks created from this inbox land in this space.</div>
+                        </div>
+                        <div class="col-auto">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="mailboxSsl" checked>
+                                <label class="form-check-label" for="mailboxSsl">SSL</label>
                             </div>
                         </div>
                     </div>
-
-                    <!-- Space Cards Container -->
-                    <div id="spaceCardsContainer" class="space-cards-container">
-                        <!-- Space cards will be dynamically rendered here -->
-                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveMailboxBtn">Save</button>
                 </div>
             </div>
         </div>
@@ -180,82 +425,42 @@
                         <label class="form-label">Description</label>
                         <textarea class="form-control" id="editDescription" rows="3"></textarea>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Space</label>
-                        <select class="form-select" id="editSpace">
-                            <option value="">None</option>
-                        </select>
+                    <div class="row g-2 mb-3">
+                        <div class="col">
+                            <label class="form-label">Status</label>
+                            <select class="form-select" id="editStatus">
+                                <option value="todo">To do</option>
+                                <option value="doing">Doing</option>
+                                <option value="blocked">Blocked</option>
+                                <option value="done">Done</option>
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label class="form-label">Space</label>
+                            <select class="form-select" id="editSpace">
+                                <option value="">None</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Priority (0-10)</label>
-                        <input type="number" class="form-control" id="editPriority" min="0" max="10">
+                    <div class="row g-2 mb-3">
+                        <div class="col">
+                            <label class="form-label">Priority (0-10)</label>
+                            <input type="number" class="form-control" id="editPriority" min="0" max="10">
+                        </div>
+                        <div class="col">
+                            <label class="form-label">Duration (min)</label>
+                            <input type="number" class="form-control" id="editDuration" min="15" step="15">
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Deadline</label>
                         <input type="datetime-local" class="form-control" id="editDeadline">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Estimated Duration (minutes)</label>
-                        <input type="number" class="form-control" id="editDuration" min="15" step="15">
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="editCompleted">
-                        <label class="form-check-label" for="editCompleted">
-                            Mark as completed
-                        </label>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-danger" id="deleteTaskBtn">Delete</button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" id="saveTaskBtn">Save</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Space Modal -->
-    <div class="modal fade" id="spaceModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Manage Spaces</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <button class="btn btn-primary btn-sm" id="addNewSpaceBtn" onclick="showAddSpaceForm()">
-                            <i class="fas fa-plus"></i> Add Space
-                        </button>
-                    </div>
-
-                    <!-- Add Space Form -->
-                    <div id="addSpaceForm" class="card mb-3" style="display: none;">
-                        <div class="card-body">
-                            <h6 class="mb-3">Add New Space</h6>
-                            <div class="mb-3">
-                                <label class="form-label">Name *</label>
-                                <input type="text" class="form-control" id="newSpaceName" placeholder="e.g., work, hobby, project">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Description</label>
-                                <textarea class="form-control" id="newSpaceDescription" rows="2" placeholder="Describe what this space is for..."></textarea>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Time Constraints (optional)</label>
-                                <div id="timeConstraints"></div>
-                                <button class="btn btn-sm btn-outline-secondary mt-2" onclick="addTimeConstraint()">
-                                    <i class="fas fa-plus"></i> Add Time Constraint
-                                </button>
-                            </div>
-                            <div class="d-flex gap-2">
-                                <button class="btn btn-primary" onclick="createSpace()">Create</button>
-                                <button class="btn btn-secondary" onclick="document.getElementById('addSpaceForm').style.display='none'">Cancel</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="spaceList"></div>
                 </div>
             </div>
         </div>
@@ -291,7 +496,7 @@
         </div>
     </div>
 
-    <!-- Add Task Modal -->
+    <!-- Add Task Modal (AI create for a specific space) -->
     <div class="modal fade" id="addTaskModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
@@ -319,9 +524,72 @@
         </div>
     </div>
 
+    <!-- Keyboard Shortcuts Help Modal -->
+    <div class="modal fade" id="helpModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-keyboard"></i> Keyboard Shortcuts</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <h6 class="text-muted">Everywhere</h6>
+                    <table class="table table-sm shortcuts-table">
+                        <tbody>
+                            <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> / <kbd>5</kbd></td><td>Switch to Tasks / Notes / Mail / Calendar / Spaces</td></tr>
+                            <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Create task with AI (in any capture input)</td></tr>
+                            <tr><td><kbd>S</kbd></td><td>Auto-schedule all tasks</td></tr>
+                            <tr><td><kbd>?</kbd></td><td>This help</td></tr>
+                            <tr><td><kbd>Esc</kbd></td><td>Close modal / cancel inline add / leave input</td></tr>
+                        </tbody>
+                    </table>
+                    <h6 class="text-muted">Tasks (board, list &amp; overview)</h6>
+                    <table class="table table-sm shortcuts-table">
+                        <tbody>
+                            <tr><td><kbd>Click</kbd> a task</td><td>Edit it</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Click</kbd> a task</td><td>Mark done / not done</td></tr>
+                            <tr><td><kbd>Shift</kbd>+<kbd>Click</kbd> a task</td><td>Freeze / unfreeze (scheduler won't move it)</td></tr>
+                            <tr><td>Drag a card</td><td>Move between board columns (updates status)</td></tr>
+                            <tr><td><kbd>Enter</kbd> in a column's + input</td><td>Create task in that column</td></tr>
+                        </tbody>
+                    </table>
+                    <h6 class="text-muted">Calendar</h6>
+                    <table class="table table-sm shortcuts-table">
+                        <tbody>
+                            <tr><td>Drag / resize an event</td><td>Reschedule + freeze (hold <kbd>Ctrl</kbd> to skip freeze)</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Click</kbd> an event</td><td>Mark done / not done</td></tr>
+                            <tr><td><kbd>Shift</kbd>+<kbd>Click</kbd> an event</td><td>Freeze / unfreeze</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Click</kbd> a day header</td><td>Freeze / unfreeze the whole day</td></tr>
+                        </tbody>
+                    </table>
+                    <h6 class="text-muted">Notes</h6>
+                    <table class="table table-sm shortcuts-table">
+                        <tbody>
+                            <tr><td>Select text → <i class="fas fa-plus-square"></i></td><td>Promote selection to a task (AI)</td></tr>
+                            <tr><td><i class="fas fa-broom"></i></td><td>Cleanify the note (AI tidy, with Undo)</td></tr>
+                        </tbody>
+                    </table>
+                    <h6 class="text-muted">Mail</h6>
+                    <table class="table table-sm shortcuts-table">
+                        <tbody>
+                            <tr><td><kbd>Click</kbd> an email</td><td>Open it (read-only — never marks it read)</td></tr>
+                            <tr><td>Right-click an email</td><td>Draft a task from it (AI), confirm before saving</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.9/index.global.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+    <script src="/static/js/task_draft_modal.js"></script>
+    <script src="/static/js/notes.js"></script>
+    <script src="/static/js/mail.js"></script>
+    <script src="/static/js/spaces.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

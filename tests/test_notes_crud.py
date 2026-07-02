@@ -109,9 +109,16 @@ def test_post_rejects_null_space_id(client):
     assert Note.query.filter_by(content_markdown='x').first() is None
 
 
-def test_notes_page_loads(client):
+def test_notes_deep_link_redirects_into_unified_shell(client):
+    # The Notes destination lives inside the unified shell (index.html);
+    # /notes deep-links to it via the #notes hash.
     login(client)
     resp = client.get('/notes')
+    assert resp.status_code == 302
+    assert resp.headers['Location'].endswith('/#notes')
+
+    # The shell itself carries the Notes view markup.
+    resp = client.get('/')
     assert resp.status_code == 200
     assert b'notes-container' in resp.data
     assert b'easymde' in resp.data.lower()

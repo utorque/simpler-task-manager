@@ -8,6 +8,8 @@
 
 > Note on the `PrePRD` label: the user explicitly requested this artifact be named a "PrePRD" rather than a `PRD`, signalling that the vision is captured but **not yet grilled for alignment**. Treat the contents below as a one-shot synthesis of the user's stated intent, grounded in the current codebase. It is the input to a future `grilling` pass, not the output of one. Per the `to-prd` lifecycle, `Status` stays `Draft` until the user signs off.
 
+> **Implementation note (2026-07-01)**: the user asked for this vision to be applied directly (no issue decomposition). It shipped on branch `claude/project-vision-modularization-3nbvhk` in five commits: (1) backend modularization per the 2026-06-30 architecture review, (2) `Task.status` workflow + `migrate_db.py` backfills, (3) the unified one-header shell (kanban home, coherent shortcuts, Notes merged in — one deviation from decision A: destinations are client-side-switched views inside one shell rather than server-rendered routes, per the user's explicit "one main header, switch from a view to another" instruction; deep links preserved via URL hashes), (4) the Mail module, (5) docs/context updates. Deferred as written here: per-task `kanban_order` ordinal (out-of-scope 6). The recommended grilling pass remains open.
+
 ---
 
 ## Problem Statement

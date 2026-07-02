@@ -10,20 +10,24 @@
 | id | INTEGER PK | auto-increment |
 | title | String(500) NOT NULL | |
 | description | Text | nullable |
-| space | String(100) | **DEPRECATED** — legacy category name, kept for backward compat; use `space_id` |
-| space_id | INTEGER FK → spaces.id | current relation |
+| space | String(100) | **LEGACY, unused by code** — column kept only because migrations are additive; data backfilled into `space_id` by `migrate_db.py` |
+| space_id | INTEGER FK → spaces.id | canonical relation |
 | priority | INTEGER default 0 | 0-10, higher = more urgent |
 | deadline | DateTime | nullable, ISO |
 | estimated_duration | INTEGER | minutes (scheduler falls back to 60) |
 | scheduled_start / scheduled_end | DateTime | set by `schedule_tasks` |
-| completed | Boolean default False | |
-| frozen | Boolean default False | pins slot; excluded from reschedule but still blocks others |
+| status | String(20) NOT NULL default 'todo' | kanban state: `todo / doing / blocked / done` (`TASK_STATUSES` in models.py) |
+| completed | Boolean default False | kept in sync: completed ⇔ status == 'done' |
+| completed_at | DateTime | stamped on first transition into done (`_sync_completed_at`), kept on re-saves of a done task, cleared on leaving done |
+| frozen | Boolean default False | pins slot; excluded from reschedule but still blocks others. Orthogonal to status |
 | created_at / updated_at | DateTime | utcnow / onupdate utcnow |
 
-`to_dict()` returns a `space` (name) field resolved from `space_rel` if present, falling back to the legacy `space` string — so the UI/API always sees a space name even though the canonical link is `space_id`.
+**Status invariant**: `status` is the single source of truth for done-ness; `Task.apply_status()` / `Task.apply_completed()` keep the pair consistent (writing `completed` derives status — `done`, or `todo` when un-completing; when a request carries both, status wins). Routes validate status and 400 unknown values.
+
+`to_dict()` returns a `space` (name) field denormalized from `space_rel` — the UI/API sees a space name but the canonical link is `space_id`. The legacy `space` string is never read.
 
 ### `spaces`
-`id`, `name` (unique), `description` (Text, helps AI infer context), `time_constraints` (Text — JSON string), `created_at`. Helpers `get_time_constraints()` / `set_time_constraints()` round-trip the JSON. Default spaces seeded: `work` (Mon-Fri 09-17), `study` (no constraints), `association` (Wed 18-22).
+`id`, `name` (unique), `description` (Text, helps AI infer context), `context_markdown` (Text — user-editable AI guidance injected into every task-drafting prompt as guide-not-source; see ai-parsing topic), `time_constraints` (Text — JSON string), `created_at`. Helpers `get_time_constraints()` / `set_time_constraints()` round-trip the JSON. Default spaces seeded: `work` (Mon-Fri 09-17), `study` (no constraints), `association` (Wed 18-22).
 
 **time_constraints JSON shape:**
 ```json
@@ -31,7 +35,9 @@
 ```
 
 ### `change_logs`
-Audit trail: `action` (create/update/delete/reorder/freeze/reschedule), `entity_type` (**task/space/note**), `entity_id`, `old_value` / `new_value` (JSON strings), `timestamp`. Intended for future ML preference learning; written opportunistically from app.py handlers.
+Audit trail: `action` (create/update/delete/reorder/freeze/unfreeze), `entity_type` (**task/space/note/mailbox**), `entity_id`, `old_value` / `new_value` (JSON strings — always full `to_dict()` snapshots), `actor` (**'user' or 'ai'** — AI-created tasks log `actor='ai'`), `timestamp`. Intended for future ML preference learning.
+
+All writers go through **`audit.record_change(action, entity_type, entity_id, old=, new=, actor=)`** which queues the row in the CURRENT session so entity mutation + audit land in one transaction (the route commits once). Do not hand-roll ChangeLog stanzas in routes.
 
 ### `calendar_sources`
 `id`, `name`, `ics_url`, `enabled`, `created_at`, `last_fetched`. No scheduling of fetches — `/api/external-events` calls `fetch_external_events` live per request.
@@ -51,5 +57,19 @@ Notes mutations log to `change_logs` with `entity_type='note'`, `action` in `{cr
 
 **Intentional absence:** there is NO `source_note_id` column on `tasks`. The link between a promoted task and its source note is conceptual only (PRD `001` Out-of-Scope 4) — a future "jump from task to note" affordance can be added later as a nullable FK if it turns out to matter.
 
-## Schema management caveat
-There is **no migration framework** (no Alembic / Flask-Migrate). Tables are created via `db.create_all()` at app startup; schema changes require manual `migrate.py`-style scripts against the prod SQLite file (an explicit open TODO in `doc/TODO.md`). When touching `models.py`, assume existing prod dbs need a hand-written migration.
+### `mailboxes`
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER PK | |
+| label | String(100) NOT NULL | display name |
+| host / port | String(255) / INTEGER default 993 | IMAP server |
+| username | String(255) NOT NULL | |
+| password_encrypted | Text NOT NULL | Fernet-encrypted (`crypto_utils`, key derived from SECRET_KEY) |
+| use_ssl | Boolean default True | False = plain IMAP + STARTTLS attempt |
+| space_id | INTEGER FK → spaces.id | nullable; the Space email-derived tasks inherit |
+| created_at / updated_at | DateTime | |
+
+No inbox contents persisted — live IMAP fetch per request (mirrors calendar_sources' live-ICS). `to_dict()` exposes `has_password` only; **passwords never leave the server**. Rotating SECRET_KEY orphans stored passwords (messages endpoints answer 409; user re-enters).
+
+## Schema management
+There is **no migration framework** (no Alembic / Flask-Migrate). Tables are created via `db.create_all()` at app startup for fresh DBs; existing prod DBs are migrated with **`migrate_db.py`** (repo root): an additive-only diff applier (CREATE missing tables, ADD COLUMN missing columns) followed by **idempotent data fixups** (`DATA_FIXUPS`: backfill `tasks.space_id` from the legacy name string, backfill `tasks.status` from `completed`, backfill `tasks.completed_at` from `updated_at` for already-done rows). When adding a column that needs a data backfill, add a guarded UPDATE to `DATA_FIXUPS` in the same change.

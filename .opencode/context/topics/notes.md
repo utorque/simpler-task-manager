@@ -2,15 +2,16 @@
 
 > In-app ADHD-friendly note capture with promote-to-task and Cleanify. PRD `001` (archived: `.opencode/plans/archive/001_PRD_notes.md`). Notes are a first-class destination alongside the calendar — thoughts get captured into the currently-selected Space, tidied with one click, and promoted into a task with a single selection+click, all without crossing application boundaries.
 
-## Information architecture
-- `/notes` — server-rendered route (`src/templates/notes.html`, login via `session['authenticated']` like `/`); NOT `@login_required`-decorated (it mirrors `/`'s session-check-and-redirect, since `login_required` returns JSON 401 not an HTML redirect). All `/api/notes/*` JSON routes ARE `@login_required`.
-- Reuses the existing `GET /api/spaces` for its Space switcher; filter state (selected Space) persisted to `localStorage`. A top-level "Notes" nav button lives in `index.html` (and `login.html`).
+## Information architecture (unified shell, 2026-07)
+- Notes is a **destination inside the unified shell** (`index.html`), not a separate page: `notes.html` was removed and `/notes` now redirects to `/#notes` (session-check-and-redirect; `login_required` returns JSON 401, not an HTML redirect, so pages do their own check). All `/api/notes/*` JSON routes (in `src/routes/notes.py`) ARE `@login_required`.
+- Frontend is the `window.NotesView` module in `src/static/js/notes.js` (IIFE, **lazy init on first entry** — `NotesView.enter()` called by the shell's `switchDestination('notes')`; CodeMirror `refresh()` on every entry because CM5 mis-measures when initialized hidden).
+- Reuses the existing `GET /api/spaces` for its Space switcher; filter state (selected Space) persisted to `localStorage`.
 - Auth: no new auth model — reuses the single shared `APP_PASSWORD` + session cookie.
 
 ## Editor: EasyMDE (CodeMirror 5)
 - Loaded via CDN (`<script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js">` + CSS), matching the project's no-build CDN pattern (FullCalendar / SortableJS / Bootstrap). Frontend logic in `src/static/js/notes.js`.
-- **Mandatory config:** `autosave: {enabled: false}` (EasyMDE's built-in localStorage autosave would shadow the backend `PUT` path), explicit minimal custom toolbar (NOT the default formatting toolbar — a bold/italic/heading toolbar would collide with Cleanify's job, which is to tidy formatting FOR the user), `status: false`.
-- Toolbar = three custom buttons only: `add-task` (promote selection to task), `cleanify` (tidy whole note via LLM), `undo-cleanify` (single-step restore). The same actions are also surfaced as standalone HTML buttons (`#addTaskBtn`, `#cleanifyBtn`, `#undoCleanifyBtn`) below the editor.
+- **Mandatory config:** `autosave: {enabled: false}` (EasyMDE's built-in localStorage autosave would shadow the backend `PUT` path), `status: false`.
+- Toolbar = the **standard formatting set** (bold/italic/strikethrough, headings 1-3, quote, lists, code, hr, link, image, preview, side-by-side, guide — `table` and `fullscreen` deliberately removed per user feedback 2026-07: table hogged a whole toolbar line) **plus** the three custom buttons: `add-task` (promote selection to task), `cleanify` (tidy whole note via LLM), `undo-cleanify` (single-step restore). (The original design shipped custom-buttons-only to keep formatting as Cleanify's job; user feedback 2026-07 asked for the toolbar back.) The custom actions are also surfaced as standalone HTML buttons (`#notePromoteBtn`, `#cleanifyBtn`, `#undoCleanifyBtn`) below the editor.
 - Selection handling (promote-to-task contract): `editor.codemirror.getSelection()` reads the selection; `editor.codemirror.somethingSelected()` toggles the `add-task` button's disabled state on `cursorActivity`/`change` (robust across browsers, wrapped lines, and iPad soft-keyboards).
 - Content replacement (Cleanify Apply): `editor.value(cleanedText)` overwrites the buffer; the CM5 `change` event fires the existing debounced `PUT`-on-input autosave, so the cleaned text persists through the normal path (no special Apply step).
 
@@ -19,7 +20,7 @@
 - A debounced (~800ms) autosave fires on every content change. First time it would fire with non-empty `content_markdown` (or non-empty `title`) → `POST /api/notes`; subsequent saves → `PUT /api/notes/<id>`.
 - Navigating away / unmounting while `content_markdown == ""` AND `title == ""` AND no prior POST = nothing persisted. No empty "Untitled" cadavers.
 
-## Routes (`src/app.py`, all `login_required`, JSON in/out)
+## Routes (`src/routes/notes.py`, all `login_required`, JSON in/out)
 - `GET /api/notes?space_id=<id>` → note DTOs for that Space, ordered by `updated_at` desc (full DTOs incl. content; client previews content for the list).
 - `POST /api/notes` → `{space_id, title?, content_markdown?}` creates + logs `entity_type='note', action='create'`. `space_id` NOT NULL enforced.
 - `GET /api/notes/<id>` → single DTO (404 if missing).
@@ -29,7 +30,7 @@
 - `POST /api/notes/<id>/promote-to-task` → `{selected_text}` → list of task draft DTOs (same shape `/api/tasks/parse` returns). Builds system prompt = `Config.SYSTEM_PROMPT` + available-spaces suffix (same as `/api/tasks/parse`), calls `parse_task_with_ai(selected_text, ...)`, defaults each draft's `space_id` to `note.space_id` when the LLM returns `None`. **Does not persist a Task**; client opens the task-confirm modal, user confirms → existing `POST /api/tasks` creates the task. Note left completely untouched.
 
 ## Frontend task-confirm modal
-- The calendar page's `#addTaskModal` (in `index.html`) is NOT loaded on `/notes` and only accepts free text + calls `/api/tasks/parse` (which creates). So `/notes` ships a self-contained JS-only confirm modal (`openPromoteTaskModal` in `notes.js`) pre-filled with a draft, whose confirm POSTs to the existing `POST /api/tasks`. For multiple drafts from one selection, the modal opens once per draft in sequence; cancel stops the loop. Single-draft path is the tested/automated case.
+- The draft-confirm modal is the **shared `window.TaskDraftModal`** (`src/static/js/task_draft_modal.js`), used by BOTH promote-to-task and the Mail module's email-to-task. `confirmDrafts(drafts, spaces)` opens the modal once per draft in sequence (cancel stops the loop) and POSTs each confirmation to the existing `POST /api/tasks`; it resolves with the count created, after which the caller refreshes the board via the global `loadTasks()`.
 
 ## Cleanify Undo (single-step, client-side)
 - On Cleanify: `previousContent` (= `state.lastCleaned`) stores the pre-clean buffer, `editor.value(resp.content)` replaces in place, "Undo Cleanify" shown.

@@ -1,823 +1,308 @@
-# Smart Task Calendar - Project Description
+# Simpler — Unified ADHD-Friendly Workspace
 
-> **Note**: This document should be kept up to date with all code changes, feature additions, and architectural modifications.
+> **Note**: This document should be kept up to date with all code changes, feature additions, and architectural modifications. Code is the source of truth; deep-dive context lives in `.opencode/context/`.
 
 ## Project Overview
 
-**Smart Task Calendar** is an ADHD-friendly task management web application that combines AI-powered task parsing with intelligent auto-scheduling. Users can paste natural language text (emails, notes, etc.), and the system automatically extracts task details and schedules them on a calendar based on priority, deadlines, and contextual constraints.
+**Simpler** is an ADHD-friendly, self-hosted workspace that unifies **tasks, calendar, notes, and mail** around a shared *Space* concept (work / study / association / …). The guiding principle: *streamlined, friction-free, all-in-one-place — everything reachable in as few clicks as possible.*
 
-**Current Version**: Production-ready with space ID support and multi-task parsing
+One page, one header, four destinations:
+
+1. **Tasks** (home) — a kanban board (`todo / doing / blocked / done`) with a space-filter chip row, drag-between-columns, and per-column inline create; a grouped-by-space **Overview** is the secondary subview.
+2. **Calendar** — AI-parsed tasks auto-scheduled around external ICS events and per-space time constraints (FullCalendar, drag = reschedule + freeze).
+3. **Notes** — space-scoped markdown capture (EasyMDE source editor) with debounced autosave, AI **Cleanify** (tidy with undo), and promote-selection-to-task.
+4. **Mail** — register IMAP mailboxes linked to Spaces, browse inboxes live, right-click an email → AI-drafted task pre-tagged with the mailbox's Space.
+
+A **global quick-capture input in the header** turns pasted text (emails, thoughts, meeting notes) into structured tasks via an LLM from anywhere in the app.
+
 **Primary Use**: Self-hosted personal task management
-**Target Users**: Individuals with ADHD who need simple, fast task organization
+**Target Users**: Individuals with ADHD who need simple, fast organization with minimal context switching
 
 ## Technology Stack
 
 ### Backend
-- **Framework**: Flask 3.0.0+ (Python web framework)
-- **Database**: SQLite with SQLAlchemy ORM
-- **AI/ML**: Anthropic Claude 4.5 Haiku (via Anthropic Python SDK 0.75.0+)
-- **Authentication**: Flask-Login 0.6.3+ with session-based auth
-- **Calendar Integration**: icalendar 5.0.11+ for ICS parsing
-- **HTTP Client**: requests 2.31.0+ for external calendar fetching
+- **Framework**: Flask 3 (app factory + per-domain blueprints)
+- **Database**: SQLite with Flask-SQLAlchemy
+- **AI**: any OpenAI-compatible endpoint (OpenAI, Mistral, Infomaniak, …) or the Anthropic API — selected at runtime from `AI_API_BASE_URL`
+- **Auth**: single shared `APP_PASSWORD`, session cookie
+- **Calendar**: `icalendar` for ICS parsing (live fetch, no sync daemon)
+- **Mail**: stdlib `imaplib` + `email` (live fetch, nothing persisted)
+- **Secrets at rest**: `cryptography` (Fernet) for mailbox passwords
 
 ### Frontend
-- **UI Framework**: Bootstrap 5
-- **Calendar Component**: FullCalendar.js
-- **Drag & Drop**: SortableJS
-- **JavaScript**: Vanilla JS (no heavy frameworks)
-- **Styling**: Custom CSS with Bootstrap theme
+- **UI**: Bootstrap 5, vanilla JS, no build step (CDN assets)
+- **Calendar**: FullCalendar.js
+- **Drag & Drop**: SortableJS (kanban columns + task list)
+- **Markdown editor**: EasyMDE (CodeMirror 5)
 
 ### Infrastructure
-- **Containerization**: Docker with Docker Compose
-- **Runtime**: Python 3.11+
-- **Web Server**: Flask built-in (development) or production WSGI server
-- **Database File**: SQLite (`tasks.db` in `/app/instance/`)
+- **Docker Compose** deploy, port 53000, `./instance` volume for the SQLite file
+- **Python 3.11+**
 
 ## Project Structure
 
 ```
 simpler-smart-calendar/
-├── app.py                      # Main Flask application (480 lines)
-├── models.py                   # SQLAlchemy database models (111 lines)
-├── ai_parser.py                # AI task parsing logic (88 lines)
-├── scheduler.py                # Auto-scheduling algorithm (226 lines)
-├── calendar_integration.py     # External calendar ICS fetching (61 lines)
-├── config.py                   # Configuration and environment setup (23 lines)
-├── prompt.md                   # AI system prompt for task parsing
-├── requirements.txt            # Python dependencies
-├── Dockerfile                  # Docker build configuration
-├── docker-compose.yml          # Docker Compose orchestration
-├── .env.example                # Environment variables template
-├── README.md                   # User documentation
-├── TODO.md                     # Development roadmap
-├── templates/
-│   ├── index.html             # Main application UI (10KB)
-│   └── login.html             # Login page (2.7KB)
-└── static/
-    ├── css/
-    │   └── style.css          # Custom styles
-    └── js/
-        └── app.js             # Frontend JavaScript logic
+├── migrate_db.py              # Additive schema reconciler + idempotent data fixups (prod SQLite)
+├── requirements.txt
+├── Dockerfile / docker-compose.yml
+├── src/
+│   ├── app.py                 # App factory only; registers blueprints
+│   ├── models.py              # Task, Space, ChangeLog, Note, Mailbox, CalendarSource
+│   ├── routes/                # Per-domain blueprints
+│   │   ├── pages.py           # /, /notes (deep link), /login, /logout
+│   │   ├── tasks.py           # /api/tasks* (CRUD, parse, freeze, reorder)
+│   │   ├── spaces.py          # /api/spaces*
+│   │   ├── notes.py           # /api/notes* (CRUD, cleanify, promote-to-task)
+│   │   ├── mailboxes.py       # /api/mailboxes* (CRUD, messages, add-task)
+│   │   ├── calendar_sources.py# /api/calendar-sources*, /api/external-events
+│   │   └── schedule.py        # /api/schedule, /api/logs
+│   ├── auth.py                # login_required decorator
+│   ├── audit.py               # record_change() — single-transaction ChangeLog seam
+│   ├── datetime_utils.py      # parse_iso_datetime
+│   ├── prompt_context.py      # system prompt assembly (spaces context)
+│   ├── seeding.py             # default spaces (shared with the test harness)
+│   ├── scheduler.py           # pure-over-data auto-scheduling (SchedulableTask dicts)
+│   ├── ai_parser.py           # AIProvider abstraction + parse/cleanify/email-to-task entry points
+│   ├── calendar_integration.py# live ICS fetch
+│   ├── mail_integration.py    # live IMAP fetch (transient DTOs)
+│   ├── crypto_utils.py        # Fernet encrypt/decrypt derived from SECRET_KEY
+│   ├── config.py              # env + prompt loading (cached at startup)
+│   ├── prompts/               # AI system prompts (task_creation, notes_cleanify, email_to_task)
+│   ├── prompts/
+│   │   ├── notes_cleanify.md  # Cleanify system prompt
+│   │   └── email_to_task.md   # email-to-task system prompt
+│   ├── templates/
+│   │   ├── index.html         # THE unified shell (all four destinations + modals)
+│   │   └── login.html
+│   └── static/
+│       ├── css/style.css
+│       └── js/
+│           ├── app.js         # shell: nav, shortcuts, board, calendar, overview, spaces
+│           ├── notes.js       # NotesView module (lazy init)
+│           ├── mail.js        # MailView module (lazy init)
+│           └── task_draft_modal.js # shared AI-draft confirm modal
+├── tests/                     # pytest harness + route-layer integration tests
+└── doc/                       # this file, README, TODO
 ```
 
 ## Database Schema
 
-### Tables
-
-#### `tasks`
-Primary task storage with scheduling and metadata.
-
+### `tasks`
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | INTEGER | PRIMARY KEY | Auto-incrementing task ID |
 | title | STRING(500) | NOT NULL | Task title |
 | description | TEXT | NULLABLE | Detailed task description |
-| space | STRING(100) | NULLABLE | DEPRECATED: Category name (use space_id) |
-| space_id | INTEGER | FOREIGN KEY | Reference to spaces.id |
+| space | STRING(100) | NULLABLE | LEGACY — unused by code; data backfilled into space_id by migrate_db.py |
+| space_id | INTEGER | FOREIGN KEY | Canonical reference to spaces.id |
 | priority | INTEGER | DEFAULT 0 | Priority 0-10, higher = more urgent |
 | deadline | DATETIME | NULLABLE | Task deadline (ISO format) |
-| estimated_duration | INTEGER | NULLABLE | Duration in minutes |
-| scheduled_start | DATETIME | NULLABLE | Scheduled start time |
-| scheduled_end | DATETIME | NULLABLE | Scheduled end time |
-| completed | BOOLEAN | DEFAULT FALSE | Completion status |
-| frozen | BOOLEAN | DEFAULT FALSE | Prevents auto-rescheduling |
-| created_at | DATETIME | DEFAULT NOW | Creation timestamp |
-| updated_at | DATETIME | ON UPDATE NOW | Last update timestamp |
+| estimated_duration | INTEGER | NULLABLE | Duration in minutes (default 60) |
+| scheduled_start / scheduled_end | DATETIME | NULLABLE | Set by the auto-scheduler |
+| status | STRING(20) | NOT NULL DEFAULT 'todo' | Kanban state: todo / doing / blocked / done |
+| completed | BOOLEAN | DEFAULT FALSE | Kept in sync: completed ⇔ status == 'done' |
+| completed_at | DATETIME | NULLABLE | Stamped on the first transition into done; cleared when leaving done; preserved on re-saves of a done task |
+| frozen | BOOLEAN | DEFAULT FALSE | Prevents auto-rescheduling (orthogonal to status) |
+| created_at / updated_at | DATETIME | | utcnow / onupdate utcnow |
 
-#### `spaces`
-Define contexts with time constraints for scheduling.
+**Status/completed invariant**: `status` is the single source of truth for done-ness. Writing `status='done'` flips `completed=True`; any other status flips it back. Legacy callers writing `completed` get `status` derived (`done`, or `todo` when un-completing). When both are sent, `status` wins.
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | INTEGER | PRIMARY KEY | Auto-incrementing space ID |
-| name | STRING(100) | UNIQUE, NOT NULL | Space name (unique) |
-| description | TEXT | NULLABLE | Space purpose/context description |
-| time_constraints | TEXT | NULLABLE | JSON string of time windows |
-| created_at | DATETIME | DEFAULT NOW | Creation timestamp |
+`to_dict()` echoes `space` (the name) denormalized from the `space_rel` relation — `space_id` is canonical.
 
-**Time Constraints Format**:
+### `spaces`
+`id`, `name` (unique), `description` (helps the AI infer context), `context_markdown` (user-editable AI guidance — see AI Integration), `time_constraints` (JSON string), `created_at`.
+
+**Time constraints format** (day 0=Monday … 6=Sunday):
 ```json
 [
-  {"day": 0, "start": "09:00", "end": "17:00"},  // Monday 9-5
-  {"day": 2, "start": "18:00", "end": "22:00"}   // Wednesday 6-10pm
+  {"day": 0, "start": "09:00", "end": "17:00"},
+  {"day": 2, "start": "18:00", "end": "22:00"}
 ]
 ```
-Days: 0=Monday, 1=Tuesday, ..., 6=Sunday
 
-#### `change_logs`
-Audit trail for all user modifications (for future ML learning).
+Default spaces seeded on first run: `work` (Mon-Fri 9-17), `study` (unconstrained), `association` (Wed 18-22).
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | INTEGER | PRIMARY KEY | Auto-incrementing log ID |
-| action | STRING(100) | NOT NULL | Action type (create/update/delete/reorder/freeze) |
-| entity_type | STRING(50) | NOT NULL | Entity affected (task/space) |
-| entity_id | INTEGER | NULLABLE | ID of affected entity |
-| old_value | TEXT | NULLABLE | JSON of previous state |
-| new_value | TEXT | NULLABLE | JSON of new state |
-| timestamp | DATETIME | DEFAULT NOW | When change occurred |
+### `change_logs`
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | |
+| action | STRING(100) NOT NULL | create / update / delete / reorder / freeze / unfreeze |
+| entity_type | STRING(50) NOT NULL | task / space / note / mailbox |
+| entity_id | INTEGER | |
+| old_value / new_value | TEXT | JSON snapshots (full `to_dict()` dicts) |
+| actor | STRING(50) DEFAULT 'user' | 'user' (direct edits) or 'ai' (AI-created entities) |
+| timestamp | DATETIME | |
 
-#### `calendar_sources`
-External calendar integrations via ICS URLs.
+All mutation routes write through `audit.record_change()` so the entity mutation and its audit row land in **one transaction**.
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | INTEGER | PRIMARY KEY | Auto-incrementing source ID |
-| name | STRING(100) | NOT NULL | Display name for calendar |
-| ics_url | STRING(500) | NOT NULL | ICS feed URL |
-| enabled | BOOLEAN | DEFAULT TRUE | Whether to fetch events |
-| created_at | DATETIME | DEFAULT NOW | When source was added |
-| last_fetched | DATETIME | NULLABLE | Last successful fetch time |
+### `notes`
+`id`, `space_id` (FK, **NOT NULL**), `title` (nullable — the list UI falls back to "Untitled"), `content_markdown` (raw markdown source), `created_at` / `updated_at`.
+
+### `mailboxes`
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | |
+| label | STRING(100) NOT NULL | Display name ("Work inbox") |
+| host / port | STRING / INTEGER | IMAP server (default port 993) |
+| username | STRING(255) NOT NULL | |
+| password_encrypted | TEXT NOT NULL | Fernet-encrypted; key derived from SECRET_KEY |
+| use_ssl | BOOLEAN DEFAULT TRUE | False = plain IMAP + STARTTLS attempt |
+| space_id | INTEGER FK | The Space email-derived tasks inherit |
+| created_at / updated_at | DATETIME | |
+
+No inbox contents are persisted — messages are fetched live per request. `to_dict()` exposes `has_password` only; **no endpoint ever returns a password**. Rotating `SECRET_KEY` invalidates stored passwords (the messages endpoints answer 409 asking for re-entry).
+
+### `calendar_sources`
+`id`, `name`, `ics_url`, `enabled`, `created_at`, `last_fetched`. Live-fetched per request (no background sync).
 
 ## API Endpoints
 
+All `/api/*` routes require the session cookie (`@login_required`, JSON 401 otherwise).
+
 ### Authentication
-
-#### `POST /login`
-Authenticate user with password.
-
-**Request Body**:
-```json
-{
-  "password": "string"
-}
-```
-
-**Response**:
-- `200`: `{"success": true}` - Sets session cookie
-- `401`: `{"error": "Invalid password"}`
-
-#### `POST /logout`
-Clear authentication session.
-
-**Response**: `{"success": true}`
-
-### Tasks
-
-#### `GET /api/tasks`
-Get all tasks (incomplete by default).
-
-**Query Parameters**:
-- `include_completed` (boolean): Include completed tasks
-
-**Response**:
-```json
-[
-  {
-    "id": 1,
-    "title": "Task title",
-    "description": "Details",
-    "space": "work",
-    "priority": 8,
-    "deadline": "2025-12-20T23:59:00",
-    "estimated_duration": 120,
-    "scheduled_start": "2025-12-18T14:00:00",
-    "scheduled_end": "2025-12-18T16:00:00",
-    "completed": false,
-    "frozen": false,
-    "created_at": "2025-12-15T10:00:00",
-    "updated_at": "2025-12-15T10:00:00"
-  }
-]
-```
-
-#### `POST /api/tasks`
-Create a new task manually.
-
-**Request Body**:
-```json
-{
-  "title": "string",
-  "description": "string (optional)",
-  "space": "string (optional)",
-  "priority": "number 0-10 (optional, default 0)",
-  "deadline": "ISO datetime string (optional)",
-  "estimated_duration": "number in minutes (optional, default 60)"
-}
-```
-
-**Response**: Task object (201 Created)
-
-#### `POST /api/tasks/parse`
-Parse natural language text and create task with AI.
-
-**Request Body**:
-```json
-{
-  "text": "Finish presentation for tomorrow's meeting, 2 hours"
-}
-```
-
-**Response**: Task object (201 Created)
-
-**AI Processing**:
-- Uses Claude 4.5 Haiku model
-- System prompt loaded from `prompt.md`
-- Extracts: title, description, space, priority, deadline, duration
-- Available spaces appended to prompt for context
-
-#### `PUT /api/tasks/<id>`
-Update an existing task.
-
-**Request Body**: Partial task object (only fields to update)
-
-**Response**: Updated task object
-
-#### `DELETE /api/tasks/<id>`
-Delete a task.
-
-**Response**: `{"success": true}`
-
-#### `POST /api/tasks/<id>/toggle-freeze`
-Toggle freeze status for a task.
-
-**Response**:
-```json
-{
-  "success": true,
-  "frozen": true
-}
-```
-
-#### `POST /api/tasks/freeze-day`
-Freeze/unfreeze all tasks on a specific day.
-
-**Request Body**:
-```json
-{
-  "date": "2025-12-18"  // YYYY-MM-DD format
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "count": 5,
-  "frozen": true
-}
-```
-
-**Logic**: If all tasks on day are frozen, unfreezes them; otherwise freezes all.
-
-#### `POST /api/tasks/reorder`
-Change task priority by reordering.
-
-**Request Body**:
-```json
-{
-  "task_ids": [3, 1, 2]  // New order (top to bottom)
-}
-```
-
-**Response**: `{"success": true}`
-
-**Logic**: Assigns priorities based on reverse index in array.
-
-### Scheduling
-
-#### `POST /api/schedule`
-Auto-schedule all incomplete tasks.
-
-**Response**:
-```json
-{
-  "success": true,
-  "scheduled_tasks": 12
-}
-```
-
-**Algorithm** (see scheduler.py:4-88):
-1. Separate frozen vs non-frozen tasks
-2. Sort non-frozen by: priority (desc), deadline (asc), created_at
-3. Fetch external calendar events (30 days ahead)
-4. Add frozen tasks to "busy slots" to protect them
-5. For each task:
-   - Find next available slot respecting:
-     - Space time constraints
-     - External events
-     - Frozen tasks
-     - Existing scheduled tasks
-   - Schedule in 30-minute increments
-6. Update task `scheduled_start` and `scheduled_end`
-
-### Spaces
-
-#### `GET /api/spaces`
-Get all spaces.
-
-**Response**: Array of space objects
-
-#### `POST /api/spaces`
-Create a new space.
-
-**Request Body**:
-```json
-{
-  "name": "string",
-  "description": "string (optional)",
-  "time_constraints": [
-    {"day": 0, "start": "09:00", "end": "17:00"}
-  ]
-}
-```
-
-**Response**: Space object (201 Created)
-
-#### `PUT /api/spaces/<id>`
-Update a space.
-
-**Request Body**: Partial space object
-
-**Response**: Updated space object
-
-#### `DELETE /api/spaces/<id>`
-Delete a space.
-
-**Response**: `{"success": true}`
-
-### Calendar Sources
-
-#### `GET /api/calendar-sources`
-Get all external calendar sources.
-
-**Response**: Array of calendar source objects
-
-#### `POST /api/calendar-sources`
-Add an external calendar.
-
-**Request Body**:
-```json
-{
-  "name": "Google Calendar",
-  "ics_url": "https://calendar.google.com/...",
-  "enabled": true
-}
-```
-
-**Response**: Calendar source object (201 Created)
-
-#### `DELETE /api/calendar-sources/<id>`
-Remove a calendar source.
-
-**Response**: `{"success": true}`
-
-#### `GET /api/external-events`
-Fetch events from all enabled external calendars.
-
-**Response**: Array of event objects
-```json
-[
-  {
-    "start": "2025-12-18T10:00:00",
-    "end": "2025-12-18T11:00:00",
-    "title": "Team Meeting",
-    "description": "Weekly sync",
-    "source": "external"
-  }
-]
-```
-
-**Fetching Logic** (calendar_integration.py):
-- Downloads ICS from each enabled source
-- Parses with `icalendar` library
-- Returns events within next 30 days
-- Converts to timezone-naive datetimes
-
-### Logs
-
-#### `GET /api/logs`
-Get change logs for audit/learning.
-
-**Query Parameters**:
-- `limit` (number): Max logs to return (default 100)
-
-**Response**: Array of change log objects (newest first)
-
-## Core Features
-
-### 1. AI Task Parsing
-
-**File**: `ai_parser.py:6-98`
-
-**Process**:
-1. User submits raw text via `/api/tasks/parse`
-2. System appends current date and time to prompt
-3. Fetches all spaces with IDs, names, and descriptions
-4. Calls Claude 4.5 Haiku with system prompt from `prompt.md`
-5. AI returns JSON with task fields (single object or array)
-6. Handles relative dates ("tomorrow", "next week", etc.)
-7. Creates task(s) in database with space_id reference
-8. Logs creation in change_logs
-
-**Multi-Task Support**: AI can return multiple tasks if input clearly describes multiple distinct tasks (e.g., "do X, Y, and Z"). Prefers single task when possible.
-
-**Fallback**: If no API key, uses simple parsing (first 100 chars as title).
-
-**Prompt Engineering**:
-- System prompt loaded once on startup (config.py:7-13)
-- Includes space IDs, names, and descriptions for context-aware parsing
-- Time-based priority adjustment using deadline proximity
-- Priority guidelines (0-10 scale) with urgency scoring
-- Duration estimation rules
-- Date/time parsing logic with current time context
-
-### 2. Auto-Scheduling Algorithm
-
-**File**: `scheduler.py:4-226`
-
-**Constraints**:
-- Space time windows (e.g., work only Mon-Fri 9-5)
-- External calendar busy times
-- Frozen tasks (immovable)
-- Task deadlines (must schedule before deadline)
-- 30-minute time increments
-
-**Priority System**:
-1. Frozen tasks (never moved)
-2. Higher priority number (0-10, with AI time-based adjustment)
-3. Closer deadline
-4. Earlier creation time
-
-**AI Priority Calculation**: When parsing tasks with deadlines, the AI computes time remaining and adjusts priority accordingly (e.g., <3 hours = 9-10 priority, 3-24 hours = 7-9, etc.), combined with urgency keywords.
-
-**Search Strategy**:
-- Searches up to 90 days ahead
-- Stops at deadline if specified
-- Finds first available 30-min slot
-- Validates against space constraints
-- Checks for conflicts with busy slots
-
-### 3. Task Freezing
-
-**Feature Added**: Latest update (see README.md:174-191)
-
-**Functionality**:
-- Ctrl+Click on calendar task: Toggle individual freeze
-- Ctrl+Click on day header: Freeze/unfreeze all tasks on that day
-- Frozen tasks show ❄️ icon and blue styling
-- Auto-schedule skips frozen tasks but treats them as busy slots
-- Freeze state logged in change_logs
-
-**UI Indicators**:
-- Frozen tasks: Blue background, snowflake icon
-- Day with frozen tasks: Visual indicator on header
-
-### 4. External Calendar Integration
-
-**File**: `calendar_integration.py`
-
-**Supported Formats**: ICS (iCalendar)
-
-**Compatible Services**:
-- Google Calendar (secret ICS URL)
-- Outlook/Office 365
-- Apple iCloud Calendar
-- Any ICS-compatible calendar
-
-**Fetching**:
-- On-demand: When user loads external events
-- During scheduling: Auto-fetches from enabled sources
-- Updates `last_fetched` timestamp
-- 30-day lookahead window
-
-### 5. Space-Based Scheduling
-
-**File**: `models.py:42-66`, `scheduler.py:155-226`
-
-**Default Spaces**:
-1. **work**: Mon-Fri 9:00-17:00, "Work-related tasks, meetings, and projects"
-2. **study**: No constraints, "Learning activities, courses, homework"
-3. **association**: Wed 18:00-22:00, "Community group activities"
-
-**Constraint Logic**:
-- Tasks with space can only be scheduled in allowed time windows
-- Tasks without space or with unconstrained space can be scheduled anytime
-- Multiple time windows per space supported
-- Day-of-week and time-of-day constraints
-
-### 6. Change Logging
-
-**Purpose**: Track all user actions for future ML-based preference learning
-
-**Logged Actions**:
-- `create`: New task/space
-- `update`: Task/space modifications
-- `delete`: Task/space removal
-- `reorder`: Priority changes
-- `freeze`/`unfreeze`: Task freeze status changes
-
-**Data Captured**:
-- Timestamp
-- Entity type and ID
-- Old value (JSON)
-- New value (JSON)
-
-## Configuration
-
-### Environment Variables
-
-**File**: `.env` (created from `.env.example`)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| ANTHROPIC_API_KEY | Yes | None | Claude API key from console.anthropic.com |
-| APP_PASSWORD | Yes | "admin" | Single password for app access |
-| SECRET_KEY | Yes | Auto-generated | Flask session secret (use random string) |
-| FLASK_ENV | No | "development" | "development" or "production" |
-
-### Application Config
-
-**File**: `config.py`
-
-**Settings**:
-- Database: SQLite at `sqlite:///tasks.db`
-- Session tracking: Disabled
-- System prompt: Loaded from `prompt.md` at startup
-- Port: 53000 (app.py:480) or 5000 (Docker)
-
-## Deployment
-
-### Docker (Recommended)
-
-**Build & Run**:
-```bash
-docker-compose up -d
-```
-
-**What Happens**:
-1. Builds Python 3.11 slim image
-2. Installs requirements
-3. Exposes port 5000
-4. Mounts `./instance` for persistent database
-5. Loads environment from `.env`
-6. Runs `python app.py`
-
-**Data Persistence**:
-- Database stored in `./instance/tasks.db` (host volume)
-- Survives container restarts/rebuilds
-
-### Manual Installation
-
-**Requirements**: Python 3.11+
-
-**Steps**:
-1. Create virtualenv: `python -m venv venv`
-2. Activate: `source venv/bin/activate`
-3. Install deps: `pip install -r requirements.txt`
-4. Create `.env` from `.env.example`
-5. Run: `python app.py`
-6. Access: http://localhost:53000
-
-### Production Considerations
-
-- Change `APP_PASSWORD` from default
-- Generate random `SECRET_KEY` (e.g., `python -c "import secrets; print(secrets.token_hex(32))"`)
-- Set `FLASK_ENV=production`
-- Use production WSGI server (gunicorn, waitress)
-- Enable HTTPS
-- Regular database backups of `instance/tasks.db`
-
-## Development Notes
-
-### Database Migrations
-
-**No formal migration system** - uses SQLAlchemy `db.create_all()`
-
-**Past Migrations**:
-- Locations → Spaces rename (migrate_locations_to_spaces.py - removed)
-- Add `frozen` column (migration.py - removed)
-- Add `description` to spaces
-
-**Manual Changes**: Modify models.py and handle data migration manually.
-
-### Default Data Initialization
-
-**File**: `app.py:452-476`
-
-On first run, creates 3 default spaces if none exist.
-
-### Testing
-
-**Status**: No test suite currently
-**TODO**: Add pytest tests (see TODO.md)
-
-### Code Style
-
-- No formal linting configured
-- Uses Flask conventions
-- Function docstrings for public functions
-- Type hints: Not used
-
-## Key Algorithms
-
-### Task Priority Sorting
-
-**File**: `app.py:59`, `scheduler.py:23-29`
-
-```python
-query.order_by(Task.priority.desc(), Task.deadline.asc())
-```
-
-**Logic**:
-1. Higher priority first
-2. If same priority, earlier deadline first
-3. If no deadline, treated as datetime.max (last)
-
-### Time Slot Conflict Detection
-
-**File**: `scheduler.py:150-152`
-
-```python
-def slots_overlap(start1, end1, start2, end2):
-    return start1 < end2 and end1 > start2
-```
-
-**Logic**: Two slots overlap if start of one is before end of other AND vice versa.
-
-### Next Valid Time for Space
-
-**File**: `scheduler.py:201-225`
-
-**Process**:
-1. If no constraints, return current time
-2. Search next 90 days
-3. For each day, check if weekday matches constraint
-4. Find constraint with start time >= current time
-5. Return constraint start time
+- `POST /login` — `{password}` → sets session
+- `POST /logout`
+
+### Tasks (`src/routes/tasks.py`)
+- `GET /api/tasks?include_completed=true|false` — ordered by priority desc, deadline asc
+- `POST /api/tasks` — `{title, description?, space_id?, priority?, deadline?, estimated_duration?, status?}`; invalid `status` → 400
+- `POST /api/tasks/parse` — `{text, space_hint?}` → AI parse (may create several tasks; single object returned when one, array when several). ChangeLog actor = 'ai'
+- `PUT /api/tasks/<id>` — any subset of fields; `status` and `completed` kept in sync (status wins)
+- `DELETE /api/tasks/<id>`
+- `POST /api/tasks/<id>/toggle-freeze`
+- `POST /api/tasks/freeze-day` — `{date: YYYY-MM-DD}` toggles freeze for all tasks scheduled that day
+- `POST /api/tasks/reorder` — `{task_ids: [...]}` rewrites priorities from list order
+
+### Scheduling (`src/routes/schedule.py`)
+- `POST /api/schedule` — auto-schedules all incomplete, non-frozen tasks into 30-min slots around external events, frozen tasks, and per-space time constraints
+- `GET /api/logs?limit=` — ChangeLog entries, newest first
+
+### Spaces (`src/routes/spaces.py`)
+- `GET/POST /api/spaces`, `PUT/DELETE /api/spaces/<id>` — CRUD, audited; fields incl. `context_markdown` (AI guidance) and `time_constraints`
+
+### Notes (`src/routes/notes.py`)
+- `GET /api/notes?space_id=` — DTOs ordered by updated_at desc
+- `POST /api/notes` — `{space_id (required), title?, content_markdown?}`
+- `GET/PUT/DELETE /api/notes/<id>`
+- `POST /api/notes/<id>/cleanify` — → `{content}`; does NOT persist (the editor applies it and the debounced PUT autosave persists). Degrades to the original content on AI failure
+- `POST /api/notes/<id>/promote-to-task` — `{selected_text}` → task draft DTOs (space defaulting to the note's); persists nothing
+
+### Mail (`src/routes/mailboxes.py`)
+- `GET /api/mailboxes` — DTOs with `has_password`, never the password
+- `POST /api/mailboxes` — `{label, host, port?, username, password, use_ssl?, space_id?}` (password encrypted at rest)
+- `PUT /api/mailboxes/<id>` — any subset; password only replaced when a non-empty one is sent
+- `DELETE /api/mailboxes/<id>`
+- `GET /api/mailboxes/<id>/messages?limit=` — live IMAP fetch → `[{uid, subject, from, date, snippet, unread}]`; 502 on IMAP failure, 409 when the stored password can't be decrypted (SECRET_KEY rotated)
+- `GET /api/mailboxes/<id>/messages/<uid>` — one message including its full plain-text `body` (read-only fetch, never marks it seen); 404 unknown uid, same 502/409 mapping
+- `POST /api/mailboxes/<id>/messages/<uid>/add-task` — fetches the body, runs the email-to-task AI prompt, returns draft(s) pre-tagged with the mailbox's `space_id`; persists nothing
+
+### Calendar sources (`src/routes/calendar_sources.py`)
+- `GET/POST /api/calendar-sources`, `DELETE /api/calendar-sources/<id>`
+- `GET /api/external-events` — live ICS fetch from all enabled sources (30-day window)
 
 ## Frontend Architecture
 
-### Main Application
+### The unified shell (`templates/index.html` + `static/js/app.js`)
 
-**File**: `templates/index.html`
+One page, one header:
 
-**Components**:
-- Task input area (top)
-- Task list (left 1/3, draggable with SortableJS)
-- FullCalendar (right 2/3)
-- Modals: Edit task, manage spaces, add calendar
+- **Header**: brand · nav tabs (Tasks/Notes/Mail/Calendar/Spaces, in `1/2/3/4/5` order) · global quick-capture input (AI task creation from anywhere) · action icons (auto-schedule, calendars, shortcuts help, logout).
+- **Destinations** are sections toggled client-side (no page reloads), deep-linkable via `#tasks / #notes / #mail / #calendar / #spaces`; the last destination is remembered (`localStorage`).
+- **Tasks**: kanban board (SortableJS across columns → `PUT {status}`; intra-column order is priority/deadline — dedicated ordinal deferred per PrePRD), space filter chips (persisted), per-column "+" inline create (Enter creates in that column/space; input stays open for rapid entry), Done column capped at 30 most recently finished (`completed_at` desc). Board ⇄ Overview toggle persisted; the Overview has a persisted "Show done" toggle listing finished tasks most-recently-finished first.
+- **Calendar**: preserved behavior — FullCalendar with drag = reschedule + auto-freeze (Ctrl skips freeze), resize = duration change, sidebar task list with drag-to-reorder.
+- **Notes** (`notes.js`, `NotesView` module, lazy init): EasyMDE source editor with the standard formatting toolbar (headings, lists, quote, code, link/image, preview, side-by-side — table and fullscreen deliberately omitted) plus the custom add-task/Cleanify/Undo actions, deferred persistence (no empty "Untitled" rows), debounced autosave, Cleanify + single-step Undo, promote-selection-to-task.
+- **Spaces** (`spaces.js`, `SpacesView` module, lazy init): space list + editor — name, description, **AI context markdown** (guidance injected into every AI task prompt), and per-weekday time windows. Replaces the old header-button modal.
+- **Mail** (`mail.js`, `MailView` module, lazy init): mailbox sidebar + add/edit modal, live inbox list, click a message → reader modal (full plain-text body, still read-only server-side), right-click (or Task button) → AI draft → shared confirm modal.
+- **`task_draft_modal.js`**: the shared "confirm this AI task draft" modal used by both promote-to-task and email-to-task (drafts are never silently persisted).
 
-**Key Features**:
-- Drag-to-reorder tasks
-- Drag/resize calendar events
-- Ctrl+Click for freezing
-- Real-time calendar updates
+### Keyboard shortcuts (one coherent set — see the in-app `?` help modal)
 
-### JavaScript
+| Shortcut | Action |
+|---|---|
+| `1` / `2` / `3` / `4` / `5` | Switch to Tasks / Notes / Mail / Calendar / Spaces |
+| `/` | Focus the quick-capture input |
+| `Ctrl+Enter` | Create task with AI (in any capture input) |
+| `S` | Auto-schedule all |
+| `?` | Shortcuts help |
+| Click / `Ctrl`+Click / `Shift`+Click on any task | Edit / toggle done / toggle freeze (same convention on the board, the list, the overview, and calendar events) |
+| `Ctrl`+Click a calendar day header | Freeze/unfreeze the whole day |
+| Drag a board card | Change its status |
+| Drag/resize a calendar event | Reschedule (+freeze; hold `Ctrl` to skip freeze) |
 
-**File**: `static/js/app.js`
+## AI Integration
 
-**Key Functions** (assumed based on features):
-- `loadTasks()`: Fetch and render task list
-- `loadSpaces()`: Fetch spaces for dropdowns
-- `parseTask()`: Submit text to AI parser
-- `autoSchedule()`: Trigger scheduling algorithm
-- `saveTask()`: Create/update task
-- `deleteTask()`: Remove task
-- `reorderTasks()`: Send new order to API
-- `toggleFreeze()`: Freeze/unfreeze task
-- `freezeDay()`: Freeze/unfreeze day
+Provider abstraction in `ai_parser.py`: `OpenAIProvider` (any OpenAI-compatible endpoint, raw `requests`) and `AnthropicProvider`, selected by `get_ai_provider()` from `AI_API_BASE_URL`. Three entry points share it:
 
-**Calendar Integration**:
-- FullCalendar configuration
-- Event drag/drop/resize handlers
-- External event fetching and rendering
+| Entry point | Prompt file | Post-processing | Degradation |
+|---|---|---|---|
+| `parse_task_with_ai` | `src/prompts/task_creation.md` (+ spaces context) | JSON → task dicts, relative deadlines normalized | trivial title/description draft |
+| `cleanify_note_with_ai` | `src/prompts/notes_cleanify.md` (+ note's Space context) | raw text | original note returned unchanged |
+| `email_to_task_with_ai` | `src/prompts/email_to_task.md` (+ spaces context) | reuses `parse_task` seam | subject/body-derived draft |
 
-### Styling
+There is deliberately **no** `AIProvider.complete()` generalization — `cleanify` is a sibling method and email-to-task reuses `parse_task` (see `.opencode/context/topics/ai-parsing.md`).
 
-**File**: `static/css/style.css`
+**Space guidance**: every task-drafting prompt additionally carries the per-space **AI context markdown** (`Space.context_markdown`, edited in the Spaces destination), assembled by `prompt_context.space_guidance_block()`. It is wrapped in explicit guide-not-source framing: the model uses it to choose the space and set priority/deadline/duration/wording, but must never copy it into task fields or derive tasks from it. Spaces without context contribute nothing (prompts stay identical to before).
 
-**Features**:
-- Bootstrap 5 base theme
-- Custom task priority colors
-- Frozen task styling (blue, snowflake)
-- Responsive layout
-- Mobile-friendly interface
+## Configuration
 
-## Authentication
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| AI_API_KEY | for AI features | None | LLM API key |
+| AI_API_BASE_URL | No | `https://api.openai.com/v1/` | Any OpenAI-compatible endpoint, or `api.anthropic.com` |
+| AI_MODEL | No | `gpt-3.5-turbo` | Model name |
+| APP_PASSWORD | Yes | "admin" | Single shared password |
+| SECRET_KEY | Yes | dev fallback | Flask session secret **and** the key mailbox passwords are encrypted with — rotating it forces re-entering mailbox passwords |
+| FLASK_ENV | No | development | |
 
-**Type**: Session-based, single-user
+## Database migrations
 
-**Flow**:
-1. User visits `/` → redirects to `/login` if not authenticated
-2. User submits password
-3. Server checks against `APP_PASSWORD` env var
-4. If valid, sets `session['authenticated'] = True`
-5. All API endpoints protected with `@login_required` decorator
+`migrate_db.py` (repo root) is the supported migration path — no Alembic. It:
 
-**Security**:
-- Session cookie (Flask default)
-- No user registration
-- Single shared password
-- No password hashing (single-user app)
+1. **CREATEs missing tables** and **ADDs missing columns** (additive-only diff of `db.metadata` vs the SQLite file; never drops anything).
+2. Runs **idempotent data fixups**: backfills `tasks.space_id` from the legacy `tasks.space` name, `tasks.status='done'` from `completed=1`, and `tasks.completed_at` from `updated_at` for already-done tasks.
 
-## Future Roadmap
+```bash
+python migrate_db.py --dry-run          # print the plan
+python migrate_db.py --yes              # apply
+python migrate_db.py --db path/to/tasks.db
+```
 
-**File**: `TODO.md`
+Run it after pulling code that changes `models.py`, before `docker compose up`.
 
-**Planned Features**:
-- [ ] Space ID instead of name in tasks (data integrity)
-- [ ] "Add context and re-plan" button
-- [ ] Web-based auto-update (docker-compose pull/up from UI)
-- [ ] Current date/time in scheduler (avoid past scheduling)
-- [ ] Task completion UI improvements
-- [ ] Context-based task filtering
-- [ ] Model selection UI
-- [ ] User habit learning from change_logs
-- [ ] System prompt optimization
-- [ ] UI/UX refresh (softer design)
-- [ ] Completed tasks view
-- [ ] Space-based task filtering
-- [ ] Space-scoped rescheduling
+## Testing
 
-**Long-Term** (from README):
-- Audio recording for task creation
-- File attachments
-- Multi-user support
-- Mobile/desktop apps
-- Natural language scheduling
-- Recurring tasks
-- Task templates
-- Collaboration features
+`pytest` (57 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
 
-## Quick Reference
+```bash
+python -m pytest -q
+```
 
-### Common File Locations
+## Deployment
 
-| What | Where |
-|------|-------|
-| Main app entry | `app.py` |
-| Database models | `models.py` |
-| Scheduling logic | `scheduler.py` |
-| AI parsing | `ai_parser.py` |
-| System prompt | `prompt.md` |
-| Environment config | `.env` (not tracked) |
-| Database file | `instance/tasks.db` |
-| Frontend UI | `templates/index.html` |
-| API routes | `app.py` (lines 25-448) |
+```bash
+docker-compose up -d        # port 53000, ./instance holds tasks.db
+```
 
-### Key Line Ranges
-
-| Feature | File:Lines |
-|---------|------------|
-| Task endpoints | app.py:50-300 |
-| Freeze functionality | app.py:204-272 |
-| Auto-schedule | app.py:303-335 |
-| Space endpoints | app.py:339-386 |
-| Calendar endpoints | app.py:389-439 |
-| AI parsing | ai_parser.py:6-87 |
-| Scheduling algorithm | scheduler.py:4-88 |
-| Slot finding | scheduler.py:91-147 |
-| Space constraints | scheduler.py:155-198 |
-| Database models | models.py:7-111 |
-
-### Important Behaviors
-
-1. **Frozen Tasks**: Never moved by auto-schedule but block other tasks
-2. **Priority Scale**: 0-10, where 10 is critical/ASAP, with time-based AI adjustment
-3. **Time Increments**: All scheduling in 30-minute blocks
-4. **Default Duration**: 60 minutes if not specified
-5. **Space Matching**: AI uses space IDs, names, and descriptions for context detection
-6. **Multi-Task Parsing**: AI can return multiple tasks from single input when obviously distinct
-7. **Deadline Behavior**: Tasks without deadlines can be scheduled anytime; with deadlines affect priority
-8. **External Events**: Fetched on-demand and during auto-schedule
-9. **Change Logs**: All actions logged for future learning
-10. **Session Timeout**: Flask default (31 days if permanent, browser session if not)
-11. **Database Init**: Auto-creates tables and default spaces on first run
-12. **Space References**: Tasks use space_id (foreign key) for data integrity; space name field deprecated
+Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remember: it also encrypts mailbox passwords), use a WSGI server, HTTPS, and back up `instance/tasks.db`.
 
 ## Version History
 
-**Current State** (Dec 2025):
-- ✅ Task freezing (ctrl+click, day freezing)
-- ✅ Space-based scheduling with space_id foreign keys
-- ✅ Multi-task AI parsing support
-- ✅ Time-based priority adjustment in AI
-- ✅ External calendar integration (ICS)
-- ✅ AI task parsing (Claude 4.5 Haiku)
-- ✅ Auto-scheduling algorithm
-- ✅ Change logging
-- ✅ Docker deployment
-- ✅ Drag-and-drop UI
-- ✅ Priority-based ordering
+**2026-07 — Unified workspace (PrePRD 000)**:
+- ✅ Backend modularized: app factory + per-domain blueprints, audited-write seam (ChangeLog actor), scheduler pure-over-data, space_id migration finished
+- ✅ Task.status kanban workflow (todo/doing/blocked/done) with completed sync
+- ✅ Unified shell: one header, four destinations, global quick capture, coherent shortcuts + help modal
+- ✅ Kanban board home with space chips + inline create; Overview kept as secondary subview
+- ✅ Notes merged into the shell (deep-linked at /#notes)
+- ✅ Mail module: space-linked IMAP mailboxes (encrypted passwords), live inbox, email→task drafts
+- ✅ migrate_db.py: data fixups + ADD COLUMN fix
 
-**Recent Changes** (from git log):
-- Space ID support with foreign keys (commit 33583e7)
-- Multi-task AI parsing capability
-- Time-based priority adjustment
-- Task freezing feature (commit 2ebb0d6)
-
-## Support & Documentation
-
-- **README.md**: User-facing documentation
-- **TODO.md**: Development roadmap
-- **MIGRATION_NOTES.md**: Space ID migration guide
-- **LICENSE**: Apache 2.0 (assumed based on LICENSE file presence)
-- **Issues**: GitHub issues (mention in README)
+**2025-12 → 2026-06**:
+- ✅ Notes module (CRUD, EasyMDE, Cleanify + Undo, promote-to-task) + pytest harness
+- ✅ Generic multi-provider AI API (OpenAI-compatible + Anthropic)
+- ✅ Space ID foreign keys, multi-task AI parsing, task freezing, external ICS calendars, auto-scheduling, change logging, Docker deploy
 
 ---
 
-**Last Updated**: 2025-12-16
-**Documentation Version**: 1.0
-**Project Status**: Production-ready, actively maintained
+**Last Updated**: 2026-07-01
+**Documentation Version**: 2.0

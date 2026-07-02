@@ -10,3 +10,4 @@ env/
 .vscode/
 *.log
 .venv/
+cookies.txt

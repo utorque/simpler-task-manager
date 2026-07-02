@@ -14,6 +14,11 @@ that introduces schema changes. Safe to run on a running server (SQLite tolerate
 concurrent readers; the migration itself is a few DDL statements under a brief
 lock).
 
+After the schema diff it runs DATA FIXUPS: idempotent UPDATE statements that
+backfill new/canonical columns from legacy ones (e.g. `tasks.space_id` from the
+deprecated `tasks.space` name string). Each fixup only touches rows where the
+target is still unset, so re-running never overwrites user data.
+
 There is no Alembic / Flask-Migrate in this project (data-model topic). This
 script is the supported alternative: a deliberate, minimal diff applier that
 matches the project's no-migration-framework posture.
@@ -100,14 +105,35 @@ def resolve_db_path(explicit: str | None) -> Path:
     )
 
 
+def check_writable(db_path: Path) -> None:
+    """
+    Fail fast with a readable message instead of a mid-migration
+    'attempt to write a readonly database' stack trace. A Docker-managed DB is
+    typically root-owned on the host; SQLite also needs write access to the
+    containing directory for its journal file.
+    """
+    problems = []
+    if not os.access(db_path, os.W_OK):
+        problems.append(str(db_path))
+    if not os.access(db_path.parent, os.W_OK):
+        problems.append(f"{db_path.parent}{os.sep} (SQLite journal lives here)")
+    if problems:
+        sys.exit(
+            "[migrate] Not writable by this user:\n  "
+            + "\n  ".join(problems)
+            + "\n[migrate] If the DB was created by Docker it is probably root-owned."
+            f"\n[migrate] Fix ownership:  sudo chown -R $USER:$USER {db_path.parent}"
+            "\n[migrate] (or re-run this script with sudo)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Diff
 # ---------------------------------------------------------------------------
 
 def column_ddl(col) -> str:
     """Render a column's type for use in an ALTER TABLE ADD COLUMN statement."""
-    return col.type.compile(dialect=__import__("sqlalchemy.dialects.sqlite",
-                                               fromlist=["dialect"]))
+    return col.type.compile(dialect=sqlite_dialect.dialect())
 
 
 def column_default_for(col):
@@ -172,7 +198,6 @@ def diff(engine):
 def apply_diff(engine, missing_tables, missing_columns, dry_run: bool) -> None:
     """Execute the additive DDL. Each statement in its own transaction."""
     if not missing_tables and not missing_columns:
-        print("[migrate] Schema is up to date — nothing to do.")
         return
 
     # Whole missing tables — let SQLAlchemy emit the CREATE TABLE (incl. FKs,
@@ -204,6 +229,50 @@ def apply_diff(engine, missing_tables, missing_columns, dry_run: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Data fixups
+# ---------------------------------------------------------------------------
+
+# (description, SQL) pairs, run AFTER the schema diff so new columns exist.
+# Every statement MUST be idempotent: guard on the target being unset.
+DATA_FIXUPS = [
+    (
+        "backfill tasks.space_id from the legacy tasks.space name string",
+        """
+        UPDATE tasks
+           SET space_id = (SELECT id FROM spaces WHERE spaces.name = tasks.space)
+         WHERE space_id IS NULL
+           AND space IS NOT NULL
+           AND EXISTS (SELECT 1 FROM spaces WHERE spaces.name = tasks.space)
+        """,
+    ),
+    (
+        "backfill tasks.status from the legacy completed flag",
+        # The status column lands with DEFAULT 'todo'; completed rows become
+        # 'done'. Also repairs any completed/status drift, which the app
+        # invariant (completed ⇔ status='done') makes a no-op normally.
+        "UPDATE tasks SET status = 'done' WHERE completed = 1 AND status <> 'done'",
+    ),
+    (
+        "backfill tasks.completed_at from updated_at for already-done tasks",
+        # Pre-existing done tasks have no recorded finish time; updated_at is
+        # the closest honest approximation. Guarded on the target being unset.
+        "UPDATE tasks SET completed_at = updated_at WHERE completed = 1 AND completed_at IS NULL",
+    ),
+]
+
+
+def apply_data_fixups(engine, dry_run: bool) -> None:
+    """Run the idempotent data backfills. Each in its own transaction."""
+    for description, sql in DATA_FIXUPS:
+        print(f"[migrate] data fixup: {description}")
+        if dry_run:
+            continue
+        with engine.begin() as conn:
+            result = conn.execute(text(sql))
+            print(f"[migrate]   -> {result.rowcount} row(s) updated")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -228,21 +297,23 @@ def main():
     missing_tables, missing_columns = diff(engine)
 
     if not missing_tables and not missing_columns:
-        print("[migrate] Schema is up to date — nothing to do.")
-        return
-
-    # Show the plan up front.
-    for t in missing_tables:
-        cols = ", ".join(c.name for c in t.columns)
-        print(f"  + table  {t.name} ({cols})")
-    for table, col in missing_columns:
-        print(f"  + column {table.name}.{col.name} ({column_ddl(col)})")
+        print("[migrate] Schema is up to date.")
+    else:
+        # Show the plan up front.
+        for t in missing_tables:
+            cols = ", ".join(c.name for c in t.columns)
+            print(f"  + table  {t.name} ({cols})")
+        for table, col in missing_columns:
+            print(f"  + column {table.name}.{col.name} ({column_ddl(col)})")
 
     if args.dry_run:
+        apply_data_fixups(engine, dry_run=True)
         print("[migrate] dry-run — no changes written.")
         return
 
-    if not args.yes:
+    check_writable(db_path)
+
+    if (missing_tables or missing_columns) and not args.yes:
         print()
         resp = input("[migrate] Apply these changes? [y/N] ").strip().lower()
         if resp not in {"y", "yes"}:
@@ -250,6 +321,9 @@ def main():
             return
 
     apply_diff(engine, missing_tables, missing_columns, dry_run=False)
+    # Data fixups run after DDL so freshly added columns exist; they are
+    # idempotent, so running them on every invocation is safe.
+    apply_data_fixups(engine, dry_run=False)
     print("[migrate] done.")
 
 

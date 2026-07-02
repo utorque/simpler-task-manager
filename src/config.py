@@ -15,9 +15,9 @@ _NOTES_CLEANIFY_PROMPT_DEFAULT = (
 )
 
 
-# Load system prompt once on startup
+# Load the task-creation system prompt once on startup
 def load_system_prompt():
-    prompt_path = os.path.join(os.path.dirname(__file__), 'prompt.md')
+    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', 'task_creation.md')
     try:
         with open(prompt_path, 'r', encoding='utf-8') as f:
             return f.read()
@@ -36,6 +36,23 @@ def load_notes_cleanify_prompt():
     except FileNotFoundError:
         return _NOTES_CLEANIFY_PROMPT_DEFAULT
 
+
+_EMAIL_TO_TASK_PROMPT_DEFAULT = (
+    "You are a task extraction assistant. The user message contains an email "
+    "(subject then body). Derive the actionable task it asks of the recipient "
+    "and return ONLY JSON with title, description, space_id, priority, "
+    "deadline, estimated_duration."
+)
+
+
+def load_email_to_task_prompt():
+    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', 'email_to_task.md')
+    try:
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return _EMAIL_TO_TASK_PROMPT_DEFAULT
+
 class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     SQLALCHEMY_DATABASE_URI = 'sqlite:///tasks.db'
@@ -48,3 +65,4 @@ class Config:
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
     SYSTEM_PROMPT = load_system_prompt()
     NOTES_CLEANIFY_PROMPT = load_notes_cleanify_prompt()
+    EMAIL_TO_TASK_PROMPT = load_email_to_task_prompt()
