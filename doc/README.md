@@ -5,16 +5,16 @@ A simple, fast, self-hosted workspace designed for people with ADHD: **tasks, ca
 ## Features
 
 ### The unified shell
-- **One main header** with the destination nav (Tasks / Calendar / Notes / Mail), a **global quick-capture input** (AI task creation from any view), and action buttons (auto-schedule, spaces, calendars, shortcuts help, logout)
-- **View switching without page reloads**: press `1` / `2` / `3` / `4`, or click the tabs; deep links via `/#tasks`, `/#calendar`, `/#notes`, `/#mail`; the app reopens where you left it
+- **One main header** with the destination nav (Tasks / Notes / Mail / Calendar), a **global quick-capture input** (AI task creation from any view), and action buttons (auto-schedule, spaces, calendars, shortcuts help, logout)
+- **View switching without page reloads**: press `1` (Tasks) / `2` (Notes) / `3` (Mail) / `4` (Calendar), or click the tabs; deep links via `/#tasks`, `/#notes`, `/#mail`, `/#calendar`; the app reopens where you left it
 - **Coherent shortcuts everywhere** — press `?` in the app for the full list
 
 ### Tasks (home) — kanban board
 - Four columns: **To do / Doing / Blocked / Done**; drag a card between columns to change its status (dragging into Done completes it)
 - **Space filter chips** on top — click a space to focus the whole board on it (remembered across sessions)
 - **Inline create** per column: `+` opens an input, `Enter` creates the task directly in that column (and in the filtered space); the input stays open for rapid entry
-- Compact cards: title, priority badge, space, deadline, duration, frozen indicator
-- The **Overview** subview (grouped-by-space dashboard with stats) is one toggle away and remembered
+- Compact cards: title, priority badge, space, deadline, duration, frozen indicator; the Done column shows the 30 most recently finished
+- The **Overview** subview (grouped-by-space dashboard with stats) is one toggle away and remembered; its **Show done** toggle lists finished tasks most-recently-finished first
 
 ### Calendar
 - **AI-Powered Task Creation**: paste text (emails, notes, etc.) into the header input; the LLM extracts title, description, space, priority (0-10), deadline, and duration — multiple tasks from one paste when the text clearly contains several
@@ -24,15 +24,15 @@ A simple, fast, self-hosted workspace designed for people with ADHD: **tasks, ca
 - **Everything is a gesture**: drag to reschedule, resize to change duration, `Ctrl+Click` to complete, click to edit
 
 ### Notes
-- Space-scoped markdown notes (source editor, EasyMDE) with **debounced autosave** and deferred persistence (no empty "Untitled" leftovers)
+- Space-scoped markdown notes (EasyMDE with the **full formatting toolbar** — headings, lists, tables, preview, side-by-side, fullscreen) with **debounced autosave** and deferred persistence (no empty "Untitled" leftovers)
 - **Cleanify**: one click runs the messy note through the LLM and tidies it in place — with a persistent one-step Undo
 - **Promote to task**: select any text in a note → one click → AI drafts a task (pre-filled with the note's space) → confirm before it's saved
 
 ### Mail
 - Register any number of **IMAP mailboxes**, each linked to a Space
 - **Passwords encrypted at rest** (Fernet, key derived from `SECRET_KEY`) and never returned by the API or shown in the UI again
-- Browse the inbox **live** (nothing is stored, messages stay unread)
-- **Right-click an email → task**: the LLM derives the actual ask from the email, pre-tagged with the mailbox's Space; you confirm before anything is saved
+- Browse the inbox **live** (nothing is stored, messages stay unread) and **click any email to read it** — the full body opens in a reader, still without marking it read on the server
+- **Right-click an email → task** (also from the reader): the LLM derives the actual ask from the email, pre-tagged with the mailbox's Space; you confirm before anything is saved
 
 ### Cross-cutting
 - **Spaces**: shared contexts (work / study / association / …) with per-weekday time windows that constrain scheduling; tasks, notes, and mailboxes all attach to them
@@ -132,7 +132,7 @@ See [PROJECT_DESCRIPTION.md](PROJECT_DESCRIPTION.md) for the full schema and end
 ### Running Tests
 
 ```bash
-python -m pytest -q     # 48 route-layer + scheduler tests
+python -m pytest -q     # 52 route-layer + scheduler tests
 ```
 
 ### Building Docker Image

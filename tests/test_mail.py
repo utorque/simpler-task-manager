@@ -125,6 +125,26 @@ def test_messages_live_fetch_returns_canned_dtos(client, stub_imap):
     assert stub_imap['fetch']['password'] == 'super-secret'
 
 
+def test_open_message_returns_full_body(client, stub_imap):
+    login(client)
+    body = make_mailbox(client)
+    resp = client.get(f"/api/mailboxes/{body['id']}/messages/101")
+    assert resp.status_code == 200
+    msg = resp.get_json()
+    assert msg['uid'] == '101'
+    assert msg['subject'] == 'Quarterly report due'
+    assert msg['body'].startswith('Full body: ')
+    # The IMAP call received the DECRYPTED password (in memory only)
+    assert stub_imap['body']['password'] == 'super-secret'
+
+
+def test_open_unknown_message_is_404(client, stub_imap):
+    login(client)
+    body = make_mailbox(client)
+    resp = client.get(f"/api/mailboxes/{body['id']}/messages/999")
+    assert resp.status_code == 404
+
+
 def test_add_task_returns_draft_tagged_with_mailbox_space_and_persists_nothing(
         client, stub_imap, stub_ai_provider):
     login(client)

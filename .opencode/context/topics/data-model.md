@@ -18,6 +18,7 @@
 | scheduled_start / scheduled_end | DateTime | set by `schedule_tasks` |
 | status | String(20) NOT NULL default 'todo' | kanban state: `todo / doing / blocked / done` (`TASK_STATUSES` in models.py) |
 | completed | Boolean default False | kept in sync: completed ⇔ status == 'done' |
+| completed_at | DateTime | stamped on first transition into done (`_sync_completed_at`), kept on re-saves of a done task, cleared on leaving done |
 | frozen | Boolean default False | pins slot; excluded from reschedule but still blocks others. Orthogonal to status |
 | created_at / updated_at | DateTime | utcnow / onupdate utcnow |
 
@@ -71,4 +72,4 @@ Notes mutations log to `change_logs` with `entity_type='note'`, `action` in `{cr
 No inbox contents persisted — live IMAP fetch per request (mirrors calendar_sources' live-ICS). `to_dict()` exposes `has_password` only; **passwords never leave the server**. Rotating SECRET_KEY orphans stored passwords (messages endpoints answer 409; user re-enters).
 
 ## Schema management
-There is **no migration framework** (no Alembic / Flask-Migrate). Tables are created via `db.create_all()` at app startup for fresh DBs; existing prod DBs are migrated with **`migrate_db.py`** (repo root): an additive-only diff applier (CREATE missing tables, ADD COLUMN missing columns) followed by **idempotent data fixups** (`DATA_FIXUPS`: backfill `tasks.space_id` from the legacy name string, backfill `tasks.status` from `completed`). When adding a column that needs a data backfill, add a guarded UPDATE to `DATA_FIXUPS` in the same change.
+There is **no migration framework** (no Alembic / Flask-Migrate). Tables are created via `db.create_all()` at app startup for fresh DBs; existing prod DBs are migrated with **`migrate_db.py`** (repo root): an additive-only diff applier (CREATE missing tables, ADD COLUMN missing columns) followed by **idempotent data fixups** (`DATA_FIXUPS`: backfill `tasks.space_id` from the legacy name string, backfill `tasks.status` from `completed`, backfill `tasks.completed_at` from `updated_at` for already-done rows). When adding a column that needs a data backfill, add a guarded UPDATE to `DATA_FIXUPS` in the same change.

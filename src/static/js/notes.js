@@ -303,13 +303,19 @@ window.NotesView = (function () {
             status: false,
             spellChecker: true,
             toolbar: [
-                '|',
+                'bold', 'italic', 'strikethrough', '|',
+                'heading-1', 'heading-2', 'heading-3', '|',
+                'quote', 'unordered-list', 'ordered-list', '|',
+                'code', 'table', 'horizontal-rule', '|',
+                'link', 'image', '|',
+                'preview', 'side-by-side', 'fullscreen', '|',
                 { name: 'add-task', action: promoteSelectionToTask,
                   className: 'fa fa-plus-square', title: 'Add as task' },
                 { name: 'cleanify', action: cleanifyCurrentNote,
                   className: 'fa fa-broom', title: 'Cleanify' },
                 { name: 'undo-cleanify', action: undoCleanify,
                   className: 'fa fa-undo', title: 'Undo Cleanify' },
+                '|', 'guide',
             ],
         });
         easyMDE.codemirror.on('change', () => {

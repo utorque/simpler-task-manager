@@ -14,7 +14,7 @@
 - [ ] add audio task using infomaniak whisper api
 - [ ] add telegram bot with n8n
 - [ ] ctrl shift click on the task list to remove it
-- [ ] mail: unread-only filter, multiple folders (INBOX only today), message detail pane
+- [ ] mail: unread-only filter, multiple folders (INBOX only today) — message reader shipped 2026-07 (click a row → modal)
 - [ ] notes: markdown rendering / live preview (source-only by design today)
 
 - [ ] do some marketing planning to redo the ui and sell points (swiss made, environmentally friendly ai with infomaniak, opensource models with mistral, fair usage-based pricing instead of subscription)
@@ -35,6 +35,7 @@
 - [ ] subspaces & subtaskd
 
 ## DONE
+- [x] 2026-07 shell polish: nav order Tasks/Notes/Mail/Calendar = 1/2/3/4; mail reader (click an email → full body, still never marked read); Overview "Show done" toggle ordered by new `tasks.completed_at` (backfilled by migrate_db.py); full EasyMDE toolbar restored
 - [x] 2026-07 unified workspace (PrePRD 000): one shell, one header, Tasks kanban home (todo/doing/blocked/done + space filter chips + inline create), Calendar demoted to sibling destination (behavior preserved), Notes merged into the shell, Mail module (encrypted IMAP mailboxes, live inbox, email→task)
 - [x] help modal to see all shortcuts (press `?`; shortcuts made coherent: 1/2/3/4 destinations, / capture, S schedule, click/Ctrl/Shift conventions)
 - [x] direct filter on task list to see only X or Y places (space chips on the board)

@@ -14,9 +14,11 @@ window.MailView = (function () {
         spaces: [],
         selectedMailboxId: null,
         messages: [],
+        openMessage: null,        // full DTO of the message shown in the reader modal
     };
 
     let mailboxModal = null;
+    let messageModal = null;
 
     function escapeHtml(s) {
         return (s || '').replace(/[&<>"']/g, c => ({
@@ -128,7 +130,13 @@ window.MailView = (function () {
                     <i class="fas fa-plus-square"></i> Task
                 </button>
             `;
-            row.querySelector('.mail-add-task').addEventListener('click', () => addTaskFromMessage(msg));
+            row.querySelector('.mail-add-task').addEventListener('click', (e) => {
+                e.stopPropagation();
+                addTaskFromMessage(msg);
+            });
+            // Click = open the message in the reader modal (read-only fetch,
+            // never marks it seen server-side).
+            row.addEventListener('click', () => viewMessage(msg));
             // Right-click = "Add task" (PrePRD story 37), same action as the button.
             row.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
@@ -136,6 +144,26 @@ window.MailView = (function () {
             });
             container.appendChild(row);
         }
+    }
+
+    async function viewMessage(msg) {
+        setStatus('opening…');
+        const resp = await fetch(
+            `/api/mailboxes/${state.selectedMailboxId}/messages/${encodeURIComponent(msg.uid)}`);
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            setStatus('');
+            alert(err.error || 'Could not open this email');
+            return;
+        }
+        const full = await resp.json();
+        state.openMessage = full;
+        document.getElementById('mailMessageSubject').textContent = full.subject || '(no subject)';
+        document.getElementById('mailMessageFrom').textContent = full.from || '';
+        document.getElementById('mailMessageDate').textContent = full.date || '';
+        document.getElementById('mailMessageBody').textContent = full.body || '(empty message)';
+        setStatus(`${state.messages.length} message${state.messages.length !== 1 ? 's' : ''}`);
+        messageModal.show();
     }
 
     async function addTaskFromMessage(msg) {
@@ -224,9 +252,15 @@ window.MailView = (function () {
         if (!state.initialized) {
             state.initialized = true;
             mailboxModal = new bootstrap.Modal(document.getElementById('mailboxModal'));
+            messageModal = new bootstrap.Modal(document.getElementById('mailMessageModal'));
             document.getElementById('addMailboxBtn').addEventListener('click', () => openMailboxModal());
             document.getElementById('saveMailboxBtn').addEventListener('click', saveMailbox);
             document.getElementById('refreshMailBtn').addEventListener('click', loadMessages);
+            document.getElementById('mailMessageAddTaskBtn').addEventListener('click', () => {
+                if (!state.openMessage) return;
+                messageModal.hide();
+                addTaskFromMessage(state.openMessage);
+            });
             await loadSpaces();
             await loadMailboxes();
             const saved = parseInt(localStorage.getItem(STORAGE_MAILBOX_KEY));

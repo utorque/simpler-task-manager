@@ -122,6 +122,32 @@ def get_mailbox_messages(mailbox_id):
     return jsonify(messages)
 
 
+@mailboxes_bp.route('/api/mailboxes/<int:mailbox_id>/messages/<uid>', methods=['GET'])
+@login_required
+def get_mailbox_message(mailbox_id, uid):
+    """One message with its full plain-text body (live IMAP, read-only —
+    opening it here does NOT mark it read on the server)."""
+    mailbox = Mailbox.query.get_or_404(mailbox_id)
+
+    try:
+        password = _mailbox_password(mailbox)
+    except InvalidToken:
+        return jsonify({'error': 'Stored password cannot be decrypted '
+                                 '(SECRET_KEY changed?). Re-enter the mailbox password.'}), 409
+
+    try:
+        message = fetch_message_body(
+            mailbox.host, mailbox.port, mailbox.username, password,
+            uid, use_ssl=mailbox.use_ssl)
+    except Exception as e:
+        return jsonify({'error': f'IMAP fetch failed: {e}'}), 502
+
+    if message is None:
+        return jsonify({'error': 'Message not found'}), 404
+
+    return jsonify(message)
+
+
 @mailboxes_bp.route('/api/mailboxes/<int:mailbox_id>/messages/<uid>/add-task', methods=['POST'])
 @login_required
 def email_to_task(mailbox_id, uid):

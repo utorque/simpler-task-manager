@@ -20,14 +20,14 @@
             <button class="nav-tab" data-destination="tasks" title="Tasks — press 1">
                 <i class="fas fa-columns"></i> Tasks <kbd>1</kbd>
             </button>
-            <button class="nav-tab" data-destination="calendar" title="Calendar — press 2">
-                <i class="fas fa-calendar"></i> Calendar <kbd>2</kbd>
+            <button class="nav-tab" data-destination="notes" title="Notes — press 2">
+                <i class="fas fa-sticky-note"></i> Notes <kbd>2</kbd>
             </button>
-            <button class="nav-tab" data-destination="notes" title="Notes — press 3">
-                <i class="fas fa-sticky-note"></i> Notes <kbd>3</kbd>
+            <button class="nav-tab" data-destination="mail" title="Mail — press 3">
+                <i class="fas fa-envelope"></i> Mail <kbd>3</kbd>
             </button>
-            <button class="nav-tab" data-destination="mail" title="Mail — press 4">
-                <i class="fas fa-envelope"></i> Mail <kbd>4</kbd>
+            <button class="nav-tab" data-destination="calendar" title="Calendar — press 4">
+                <i class="fas fa-calendar"></i> Calendar <kbd>4</kbd>
             </button>
         </nav>
         <!-- Global quick capture: reachable from every view, zero clicks -->
@@ -124,6 +124,16 @@
 
             <!-- Overview (grouped by space, kept as the secondary view) -->
             <div id="overviewView" style="display: none;">
+                <div class="d-flex justify-content-end mb-2">
+                    <button class="btn btn-sm btn-outline-secondary" id="overviewDoneToggle"
+                            onclick="toggleOverviewDone()" title="Show/hide finished tasks">
+                        <i class="fas fa-check"></i> Show done
+                    </button>
+                </div>
+                <div id="overviewDoneSection" class="mb-4" style="display: none;">
+                    <h6 class="text-muted mb-2"><i class="fas fa-check-double"></i> Done — most recently finished first</h6>
+                    <div id="overviewDoneList" class="overview-done-list"></div>
+                </div>
                 <div class="overview-stats mb-4">
                     <div class="row g-3">
                         <div class="col-md-3">
@@ -258,13 +268,39 @@
                             <i class="fas fa-rotate"></i>
                         </button>
                         <span id="mailStatus" class="small text-muted"></span>
-                        <span class="small text-muted ms-auto">Right-click an email (or its <i class="fas fa-plus-square"></i> button) → task</span>
+                        <span class="small text-muted ms-auto">Click an email to read it · right-click (or <i class="fas fa-plus-square"></i>) → task</span>
                     </div>
                     <div id="mailMessages"></div>
                 </div>
             </div>
         </section>
     </main>
+
+    <!-- Mail Message Reader Modal -->
+    <div class="modal fade" id="mailMessageModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="mailMessageSubject"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mail-message-headers mb-3">
+                        <div><span class="text-muted">From:</span> <span id="mailMessageFrom"></span></div>
+                        <div><span class="text-muted">Date:</span> <span id="mailMessageDate"></span></div>
+                    </div>
+                    <pre class="mail-message-body" id="mailMessageBody"></pre>
+                </div>
+                <div class="modal-footer">
+                    <span class="small text-muted me-auto">Read-only: opening here never marks it read on the server</span>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="mailMessageAddTaskBtn">
+                        <i class="fas fa-plus-square"></i> Add as task
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Mailbox Add/Edit Modal -->
     <div class="modal fade" id="mailboxModal" tabindex="-1">
@@ -497,7 +533,7 @@
                     <h6 class="text-muted">Everywhere</h6>
                     <table class="table table-sm shortcuts-table">
                         <tbody>
-                            <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd></td><td>Switch to Tasks / Calendar / Notes / Mail</td></tr>
+                            <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd></td><td>Switch to Tasks / Notes / Mail / Calendar</td></tr>
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
                             <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Create task with AI (in any capture input)</td></tr>
                             <tr><td><kbd>S</kbd></td><td>Auto-schedule all tasks</td></tr>
@@ -534,6 +570,7 @@
                     <h6 class="text-muted">Mail</h6>
                     <table class="table table-sm shortcuts-table">
                         <tbody>
+                            <tr><td><kbd>Click</kbd> an email</td><td>Open it (read-only — never marks it read)</td></tr>
                             <tr><td>Right-click an email</td><td>Draft a task from it (AI), confirm before saving</td></tr>
                         </tbody>
                     </table>

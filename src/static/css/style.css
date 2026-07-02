@@ -1171,6 +1171,43 @@ body {
     flex-shrink: 0;
 }
 
+.mail-message-row {
+    cursor: pointer;
+}
+
+.mail-message-row:hover {
+    border-color: #0d6efd;
+}
+
+/* Mail reader modal */
+.mail-message-headers {
+    font-size: 0.85rem;
+    border-bottom: 1px solid #e9ecef;
+    padding-bottom: 0.5rem;
+}
+
+.mail-message-body {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+/* Overview: recently-finished list behind the "Show done" toggle */
+.overview-done-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+#overviewDoneToggle.active {
+    background: #6c757d;
+    color: white;
+}
+
 /* Shortcuts help modal */
 .shortcuts-table td:first-child {
     white-space: nowrap;

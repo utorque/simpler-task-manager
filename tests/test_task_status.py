@@ -78,6 +78,33 @@ def test_update_with_invalid_status_is_rejected(client):
     assert resp.status_code == 400
 
 
+def test_completing_stamps_completed_at_and_uncompleting_clears_it(client):
+    login(client)
+    task = make_task(client)
+    assert task['completed_at'] is None
+
+    body = client.put(f"/api/tasks/{task['id']}", json={'status': 'done'}).get_json()
+    assert body['completed_at'] is not None
+    first_finish = body['completed_at']
+
+    # Re-saving an already-done task keeps the original finish time.
+    body = client.put(f"/api/tasks/{task['id']}", json={'status': 'done', 'title': 'renamed'}).get_json()
+    assert body['completed_at'] == first_finish
+
+    # Leaving done clears the timestamp.
+    body = client.put(f"/api/tasks/{task['id']}", json={'status': 'todo'}).get_json()
+    assert body['completed_at'] is None
+
+
+def test_legacy_completed_write_also_stamps_completed_at(client):
+    login(client)
+    task = make_task(client)
+    body = client.put(f"/api/tasks/{task['id']}", json={'completed': True}).get_json()
+    assert body['completed_at'] is not None
+    body = client.put(f"/api/tasks/{task['id']}", json={'completed': False}).get_json()
+    assert body['completed_at'] is None
+
+
 def test_frozen_is_orthogonal_to_status(client):
     login(client)
     task = make_task(client, status='doing')

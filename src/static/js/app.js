@@ -14,6 +14,7 @@ let addTaskModal;
 let helpModal;
 let sortable;
 let showCompletedTasks = false;
+let overviewShowDone = localStorage.getItem('overviewShowDone') === 'true';
 let focusedSpace = localStorage.getItem('focusedSpace') || null;
 let currentDestination = null;
 let tasksSubview = localStorage.getItem('tasksSubview') || 'board';
@@ -79,6 +80,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     wireTaskClickDelegation('taskList', '.task-item');
     wireTaskClickDelegation('spaceCardsContainer', '.space-task-item');
     wireTaskClickDelegation('boardView', '.board-card');
+    wireTaskClickDelegation('overviewDoneList', '.task-item');
 
     // Ctrl+Enter submits the quick capture
     document.getElementById('quickCapture').addEventListener('keydown', function(e) {
@@ -175,9 +177,9 @@ function initKeyboardShortcuts() {
 
         switch (e.key) {
             case '1': switchDestination('tasks'); break;
-            case '2': switchDestination('calendar'); break;
-            case '3': switchDestination('notes'); break;
-            case '4': if (document.getElementById('view-mail')) switchDestination('mail'); break;
+            case '2': switchDestination('notes'); break;
+            case '3': switchDestination('mail'); break;
+            case '4': switchDestination('calendar'); break;
             case '/':
                 e.preventDefault();
                 document.getElementById('quickCapture').focus();
@@ -332,8 +334,9 @@ function renderBoard() {
             (new Date(a.created_at) - new Date(b.created_at))
         );
     });
-    // Done: most recently touched first, capped to keep the column scannable.
-    byStatus.done.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    // Done: most recently finished first, capped to keep the column scannable.
+    byStatus.done.sort((a, b) =>
+        new Date(b.completed_at || b.updated_at) - new Date(a.completed_at || a.updated_at));
     const doneOverflow = Math.max(0, byStatus.done.length - DONE_COLUMN_LIMIT);
     byStatus.done = byStatus.done.slice(0, DONE_COLUMN_LIMIT);
 
@@ -1328,6 +1331,63 @@ function getDayName(dayIndex) {
 function renderOverview() {
     calculateStats();
     renderSpaceCards();
+    renderOverviewDone();
+}
+
+// Toggle the recently-finished list (persisted)
+function toggleOverviewDone() {
+    overviewShowDone = !overviewShowDone;
+    localStorage.setItem('overviewShowDone', String(overviewShowDone));
+    renderOverviewDone();
+}
+
+function formatFinishedAgo(iso) {
+    if (!iso) return '';
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 7 * 86400) return `${Math.floor(diff / 86400)}d ago`;
+    return new Date(iso).toLocaleDateString();
+}
+
+// Done tasks, most recently finished first (completed_at, updated_at fallback
+// for tasks finished before the timestamp existed).
+function renderOverviewDone() {
+    const section = document.getElementById('overviewDoneSection');
+    const btn = document.getElementById('overviewDoneToggle');
+    if (!section || !btn) return;
+
+    btn.classList.toggle('active', overviewShowDone);
+    btn.innerHTML = overviewShowDone
+        ? '<i class="fas fa-eye-slash"></i> Hide done'
+        : '<i class="fas fa-check"></i> Show done';
+
+    if (!overviewShowDone) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = 'block';
+
+    const done = tasks
+        .filter(t => t.completed)
+        .sort((a, b) =>
+            new Date(b.completed_at || b.updated_at) - new Date(a.completed_at || a.updated_at));
+
+    const list = document.getElementById('overviewDoneList');
+    if (done.length === 0) {
+        list.innerHTML = '<div class="text-muted small py-2">Nothing finished yet.</div>';
+        return;
+    }
+    list.innerHTML = done.map(task => `
+        <div class="task-item completed" data-task-id="${task.id}">
+            <div class="task-title">${escapeHtml(task.title)}</div>
+            <div class="task-meta">
+                ${task.space ? `<span class="task-space"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(task.space)}</span>` : ''}
+                <span class="task-meta-item"><i class="fas fa-check"></i> ${formatFinishedAgo(task.completed_at || task.updated_at)}</span>
+            </div>
+        </div>
+    `).join('');
 }
 
 // Calculate and display overview statistics

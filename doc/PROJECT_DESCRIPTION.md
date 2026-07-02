@@ -102,6 +102,7 @@ simpler-smart-calendar/
 | scheduled_start / scheduled_end | DATETIME | NULLABLE | Set by the auto-scheduler |
 | status | STRING(20) | NOT NULL DEFAULT 'todo' | Kanban state: todo / doing / blocked / done |
 | completed | BOOLEAN | DEFAULT FALSE | Kept in sync: completed ⇔ status == 'done' |
+| completed_at | DATETIME | NULLABLE | Stamped on the first transition into done; cleared when leaving done; preserved on re-saves of a done task |
 | frozen | BOOLEAN | DEFAULT FALSE | Prevents auto-rescheduling (orthogonal to status) |
 | created_at / updated_at | DATETIME | | utcnow / onupdate utcnow |
 
@@ -193,6 +194,7 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 - `PUT /api/mailboxes/<id>` — any subset; password only replaced when a non-empty one is sent
 - `DELETE /api/mailboxes/<id>`
 - `GET /api/mailboxes/<id>/messages?limit=` — live IMAP fetch → `[{uid, subject, from, date, snippet, unread}]`; 502 on IMAP failure, 409 when the stored password can't be decrypted (SECRET_KEY rotated)
+- `GET /api/mailboxes/<id>/messages/<uid>` — one message including its full plain-text `body` (read-only fetch, never marks it seen); 404 unknown uid, same 502/409 mapping
 - `POST /api/mailboxes/<id>/messages/<uid>/add-task` — fetches the body, runs the email-to-task AI prompt, returns draft(s) pre-tagged with the mailbox's `space_id`; persists nothing
 
 ### Calendar sources (`src/routes/calendar_sources.py`)
@@ -205,19 +207,19 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 
 One page, one header:
 
-- **Header**: brand · nav tabs (Tasks/Calendar/Notes/Mail) · global quick-capture input (AI task creation from anywhere) · action icons (auto-schedule, spaces, calendars, shortcuts help, logout).
-- **Destinations** are sections toggled client-side (no page reloads), deep-linkable via `#tasks / #calendar / #notes / #mail`; the last destination is remembered (`localStorage`).
-- **Tasks**: kanban board (SortableJS across columns → `PUT {status}`; intra-column order is priority/deadline — dedicated ordinal deferred per PrePRD), space filter chips (persisted), per-column "+" inline create (Enter creates in that column/space; input stays open for rapid entry), Done column capped at 30 most recent. Board ⇄ Overview toggle persisted.
+- **Header**: brand · nav tabs (Tasks/Notes/Mail/Calendar, in `1/2/3/4` order) · global quick-capture input (AI task creation from anywhere) · action icons (auto-schedule, spaces, calendars, shortcuts help, logout).
+- **Destinations** are sections toggled client-side (no page reloads), deep-linkable via `#tasks / #notes / #mail / #calendar`; the last destination is remembered (`localStorage`).
+- **Tasks**: kanban board (SortableJS across columns → `PUT {status}`; intra-column order is priority/deadline — dedicated ordinal deferred per PrePRD), space filter chips (persisted), per-column "+" inline create (Enter creates in that column/space; input stays open for rapid entry), Done column capped at 30 most recently finished (`completed_at` desc). Board ⇄ Overview toggle persisted; the Overview has a persisted "Show done" toggle listing finished tasks most-recently-finished first.
 - **Calendar**: preserved behavior — FullCalendar with drag = reschedule + auto-freeze (Ctrl skips freeze), resize = duration change, sidebar task list with drag-to-reorder.
-- **Notes** (`notes.js`, `NotesView` module, lazy init): EasyMDE source editor, deferred persistence (no empty "Untitled" rows), debounced autosave, Cleanify + single-step Undo, promote-selection-to-task.
-- **Mail** (`mail.js`, `MailView` module, lazy init): mailbox sidebar + add/edit modal, live inbox list, right-click (or Task button) → AI draft → shared confirm modal.
+- **Notes** (`notes.js`, `NotesView` module, lazy init): EasyMDE source editor with the full formatting toolbar (headings, lists, table, preview/side-by-side/fullscreen…) plus the custom add-task/Cleanify/Undo actions, deferred persistence (no empty "Untitled" rows), debounced autosave, Cleanify + single-step Undo, promote-selection-to-task.
+- **Mail** (`mail.js`, `MailView` module, lazy init): mailbox sidebar + add/edit modal, live inbox list, click a message → reader modal (full plain-text body, still read-only server-side), right-click (or Task button) → AI draft → shared confirm modal.
 - **`task_draft_modal.js`**: the shared "confirm this AI task draft" modal used by both promote-to-task and email-to-task (drafts are never silently persisted).
 
 ### Keyboard shortcuts (one coherent set — see the in-app `?` help modal)
 
 | Shortcut | Action |
 |---|---|
-| `1` / `2` / `3` / `4` | Switch to Tasks / Calendar / Notes / Mail |
+| `1` / `2` / `3` / `4` | Switch to Tasks / Notes / Mail / Calendar |
 | `/` | Focus the quick-capture input |
 | `Ctrl+Enter` | Create task with AI (in any capture input) |
 | `S` | Auto-schedule all |
@@ -255,7 +257,7 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 `migrate_db.py` (repo root) is the supported migration path — no Alembic. It:
 
 1. **CREATEs missing tables** and **ADDs missing columns** (additive-only diff of `db.metadata` vs the SQLite file; never drops anything).
-2. Runs **idempotent data fixups**: backfills `tasks.space_id` from the legacy `tasks.space` name, and `tasks.status='done'` from `completed=1`.
+2. Runs **idempotent data fixups**: backfills `tasks.space_id` from the legacy `tasks.space` name, `tasks.status='done'` from `completed=1`, and `tasks.completed_at` from `updated_at` for already-done tasks.
 
 ```bash
 python migrate_db.py --dry-run          # print the plan
@@ -267,7 +269,7 @@ Run it after pulling code that changes `models.py`, before `docker compose up`.
 
 ## Testing
 
-`pytest` (48 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
+`pytest` (52 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
 
 ```bash
 python -m pytest -q

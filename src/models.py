@@ -29,6 +29,7 @@ class Task(db.Model):
     # calendar UI and legacy API callers.
     status = db.Column(db.String(20), default='todo', nullable=False)
     completed = db.Column(db.Boolean, default=False)
+    completed_at = db.Column(db.DateTime)  # set when the task turns done, cleared when it un-dones
     frozen = db.Column(db.Boolean, default=False)  # Prevents rescheduling when True
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -37,11 +38,12 @@ class Task(db.Model):
     space_rel = db.relationship('Space', backref='tasks', foreign_keys=[space_id])
 
     def apply_status(self, status):
-        """Set the kanban status and keep `completed` in sync."""
+        """Set the kanban status and keep `completed` (+ completed_at) in sync."""
         if status not in TASK_STATUSES:
             raise ValueError(f"invalid status {status!r}, expected one of {TASK_STATUSES}")
         self.status = status
         self.completed = (status == 'done')
+        self._sync_completed_at()
 
     def apply_completed(self, completed):
         """Legacy write path: setting `completed` derives `status`."""
@@ -50,6 +52,16 @@ class Task(db.Model):
             self.status = 'done'
         elif self.status == 'done':
             self.status = 'todo'
+        self._sync_completed_at()
+
+    def _sync_completed_at(self):
+        # First transition into done stamps the time; re-saving an
+        # already-done task keeps the original finish time.
+        if self.completed:
+            if self.completed_at is None:
+                self.completed_at = datetime.utcnow()
+        else:
+            self.completed_at = None
 
     def to_dict(self):
         # space_id is canonical; 'space' is a denormalized name echo for the UI.
@@ -68,6 +80,7 @@ class Task(db.Model):
             'scheduled_end': self.scheduled_end.isoformat() if self.scheduled_end else None,
             'status': self.status or 'todo',
             'completed': self.completed,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'frozen': self.frozen,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()

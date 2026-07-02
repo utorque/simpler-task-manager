@@ -230,6 +230,12 @@ DATA_FIXUPS = [
         # invariant (completed ⇔ status='done') makes a no-op normally.
         "UPDATE tasks SET status = 'done' WHERE completed = 1 AND status <> 'done'",
     ),
+    (
+        "backfill tasks.completed_at from updated_at for already-done tasks",
+        # Pre-existing done tasks have no recorded finish time; updated_at is
+        # the closest honest approximation. Guarded on the target being unset.
+        "UPDATE tasks SET completed_at = updated_at WHERE completed = 1 AND completed_at IS NULL",
+    ),
 ]
 
 
