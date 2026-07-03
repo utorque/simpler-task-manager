@@ -826,6 +826,20 @@ body {
     border-color: transparent;
 }
 
+/* Alt+click exclusion: the chip greys out and the space's items are hidden. */
+.space-chip.excluded {
+    opacity: 0.45;
+    text-decoration: line-through;
+    border-style: dashed;
+    background: #edf2f7;
+}
+
+.space-chip.excluded:hover {
+    opacity: 0.7;
+    border-color: #cbd5e0;
+    background: #edf2f7;
+}
+
 /* ===== Kanban board ===== */
 
 .board {

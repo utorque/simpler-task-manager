@@ -7,6 +7,7 @@ window.NotesView = (function () {
 
     const STORAGE_SPACE_KEY = 'notes.selectedSpaceId';       // legacy single-space key (migrated)
     const STORAGE_SPACES_KEY = 'notes.selectedSpaceIds';     // JSON array, or 'all'
+    const STORAGE_EXCLUDED_KEY = 'notes.excludedSpaceIds';   // JSON array
     const AUTOSAVE_DEBOUNCE_MS = 800;
     const CONTENT_PREVIEW_LEN = 80;
 
@@ -16,6 +17,9 @@ window.NotesView = (function () {
         // Same convention as the kanban board chips: null = all spaces,
         // otherwise a non-empty array of space ids (Ctrl+click multi-select).
         selectedSpaceIds: null,
+        // Space ids muted from the list: Alt+click a chip greys it out and
+        // hides its notes. Complements the include-filter above.
+        excludedSpaceIds: new Set(),
         notes: [],
         // Ctrl+click download selection in the notes list (ids). Empty set =
         // no selection → the download button exports every note in view.
@@ -62,42 +66,80 @@ window.NotesView = (function () {
     function storeSelection() {
         localStorage.setItem(STORAGE_SPACES_KEY,
             state.selectedSpaceIds === null ? 'all' : JSON.stringify(state.selectedSpaceIds));
+        localStorage.setItem(STORAGE_EXCLUDED_KEY,
+            JSON.stringify(Array.from(state.excludedSpaceIds)));
+    }
+
+    function restoreExclusions() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(STORAGE_EXCLUDED_KEY));
+            if (Array.isArray(parsed)) {
+                return new Set(parsed.filter(id => state.spaces.some(s => s.id === id)));
+            }
+        } catch (e) { /* absent or corrupt → nothing excluded */ }
+        return new Set();
     }
 
     async function loadSpaces() {
         state.spaces = await api('/api/spaces');
         state.selectedSpaceIds = restoreSelection();
+        state.excludedSpaceIds = restoreExclusions();
         renderSpaceChips();
     }
 
+    // The space ids the list actually shows: the include-filter (null = all)
+    // minus the excluded set.
+    function visibleSpaceIds() {
+        const base = state.selectedSpaceIds !== null
+            ? state.selectedSpaceIds
+            : state.spaces.map(s => s.id);
+        return base.filter(id => !state.excludedSpaceIds.has(id));
+    }
+
     // Same chips as the kanban board: plain click = show only that space,
-    // Ctrl+click or Alt+click = toggle the space in/out of the multi-space
-    // selection (Alt is the app's multi-select modifier — it must never
-    // collapse the filter to a single space).
+    // Ctrl+click = toggle the space in/out of the multi-space selection,
+    // Alt+click = exclude the space (greyed chip, its notes hidden until
+    // Alt+clicked again). "All" resets both filter and exclusions.
     function renderSpaceChips() {
         const container = document.getElementById('notesSpaceChips');
-        const chip = (label, value, active) => `
-            <button class="space-chip ${active ? 'active' : ''}" data-space-id="${value === null ? 'all' : value}">
+        const chip = (label, value, active, excluded) => `
+            <button class="space-chip ${active ? 'active' : ''} ${excluded ? 'excluded' : ''}"
+                    data-space-id="${value === null ? 'all' : value}">
                 ${label}
             </button>`;
         container.innerHTML =
-            chip('All', null, state.selectedSpaceIds === null) +
+            chip('All', null, state.selectedSpaceIds === null && state.excludedSpaceIds.size === 0, false) +
             state.spaces.map(sp => chip(escapeHtml(sp.name), sp.id,
-                state.selectedSpaceIds !== null && state.selectedSpaceIds.includes(sp.id))).join('');
+                state.selectedSpaceIds !== null && state.selectedSpaceIds.includes(sp.id),
+                state.excludedSpaceIds.has(sp.id))).join('');
 
         container.querySelectorAll('.space-chip').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const v = btn.dataset.spaceId;
                 if (v === 'all') {
                     state.selectedSpaceIds = null;
+                    state.excludedSpaceIds.clear();
                 } else {
                     const id = parseInt(v);
-                    if (e.ctrlKey || e.metaKey || e.altKey) {
+                    if (e.altKey) {
+                        if (state.excludedSpaceIds.has(id)) {
+                            state.excludedSpaceIds.delete(id);
+                        } else {
+                            state.excludedSpaceIds.add(id);
+                            // An excluded space can't stay in the include set.
+                            if (state.selectedSpaceIds !== null) {
+                                state.selectedSpaceIds = state.selectedSpaceIds.filter(x => x !== id);
+                                if (state.selectedSpaceIds.length === 0) state.selectedSpaceIds = null;
+                            }
+                        }
+                    } else if (e.ctrlKey || e.metaKey) {
                         const set = new Set(state.selectedSpaceIds || []);
                         set.has(id) ? set.delete(id) : set.add(id);
                         state.selectedSpaceIds = set.size ? Array.from(set) : null;
+                        state.excludedSpaceIds.delete(id); // explicitly picked → visible
                     } else {
                         state.selectedSpaceIds = [id];
+                        state.excludedSpaceIds.delete(id); // explicitly picked → visible
                     }
                 }
                 storeSelection();
@@ -107,10 +149,11 @@ window.NotesView = (function () {
         });
     }
 
-    // The space a NEW note lands in: the first selected space, or the first
-    // space overall when viewing all spaces.
+    // The space a NEW note lands in: the first visible (selected and not
+    // excluded) space, falling back to the first space overall.
     function primarySpaceId() {
-        if (state.selectedSpaceIds !== null) return state.selectedSpaceIds[0];
+        const visible = visibleSpaceIds();
+        if (visible.length) return visible[0];
         return state.spaces[0] && state.spaces[0].id;
     }
 
@@ -121,10 +164,15 @@ window.NotesView = (function () {
 
     // --- Notes list ---
     async function loadNotes() {
-        const params = state.selectedSpaceIds === null
-            ? ''
-            : '?' + state.selectedSpaceIds.map(id => `space_id=${id}`).join('&');
-        state.notes = await api(`/api/notes${params}`);
+        if (state.selectedSpaceIds === null && state.excludedSpaceIds.size === 0) {
+            // No restriction at all — one unfiltered fetch.
+            state.notes = await api('/api/notes');
+        } else {
+            const ids = visibleSpaceIds();
+            state.notes = ids.length === 0
+                ? [] // every space filtered out or excluded
+                : await api('/api/notes?' + ids.map(id => `space_id=${id}`).join('&'));
+        }
         // Prune the download selection: keep only notes still in view.
         const visible = new Set(state.notes.map(n => n.id));
         state.selectedNoteIds = new Set([...state.selectedNoteIds].filter(id => visible.has(id)));
