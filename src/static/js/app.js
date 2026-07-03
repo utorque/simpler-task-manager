@@ -21,6 +21,10 @@ let tasksSubview = localStorage.getItem('tasksSubview') || 'board';
 // null = all spaces; otherwise a non-empty array of space ids. Plain click on
 // a chip selects that one space; Ctrl+click toggles it in/out of the set.
 let boardSpaceFilter = parseStoredSpaceFilter();
+// Space ids muted from the board: Alt+click a chip greys it out and hides its
+// tasks. Complements the include-filter above (both persisted); "All spaces"
+// resets both.
+let boardExcludedSpaces = parseStoredExcludedSpaces();
 
 // Multi-selection (kanban board only). Alt+click toggles a card in/out of
 // this set; dragging a selected card moves the whole set; Enter forces all
@@ -48,6 +52,29 @@ function parseStoredSpaceFilter() {
 function storeSpaceFilter() {
     localStorage.setItem('boardSpaceFilter',
         boardSpaceFilter === null ? 'all' : JSON.stringify(boardSpaceFilter));
+}
+
+function parseStoredExcludedSpaces() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem('boardExcludedSpaces'));
+        if (Array.isArray(parsed)) return new Set(parsed.filter(Number.isInteger));
+    } catch (e) { /* absent or corrupt → nothing excluded */ }
+    return new Set();
+}
+
+function storeExcludedSpaces() {
+    localStorage.setItem('boardExcludedSpaces',
+        JSON.stringify(Array.from(boardExcludedSpaces)));
+}
+
+// The space ids the board actually shows once the exclusions are applied:
+// null = no restriction, otherwise a (possibly empty) array of ids. Used for
+// the request scopes that must match what the user sees (auto-doing, inline
+// add's restrict_space) — the board itself filters tasks directly.
+function effectiveBoardSpaceIds() {
+    if (boardExcludedSpaces.size === 0) return boardSpaceFilter;
+    const base = boardSpaceFilter !== null ? boardSpaceFilter : spaces.map(s => s.id);
+    return base.filter(id => !boardExcludedSpaces.has(id));
 }
 
 // Initialize app
@@ -632,11 +659,13 @@ function initBoardInlineAdd() {
             // priority/duration inference, and multi-task split. The column the
             // user typed in is honored via `force_status`; the active board space
             // filter scopes the AI prompt to that single space (hard scope) when
-            // exactly one space is selected. "All spaces" and multi-space
-            // selections omit `restrict_space` entirely.
+            // exactly one space is visible (selected, or the only one left
+            // after exclusions). "All spaces" and multi-space views omit
+            // `restrict_space` entirely.
             const body = { text: title, force_status: form.dataset.status };
-            if (boardSpaceFilter !== null && boardSpaceFilter.length === 1) {
-                body.restrict_space = boardSpaceFilter[0];
+            const visibleSpaceIds = effectiveBoardSpaceIds();
+            if (visibleSpaceIds !== null && visibleSpaceIds.length === 1) {
+                body.restrict_space = visibleSpaceIds[0];
             }
 
             try {
@@ -681,7 +710,10 @@ async function autoSelectDoing() {
     input.disabled = true;
 
     const body = { text };
-    if (boardSpaceFilter !== null) body.space_ids = boardSpaceFilter;
+    // Scope auto-doing to the spaces the board actually shows, so it never
+    // pulls tasks from a filtered-out or excluded (greyed) space.
+    const visibleSpaceIds = effectiveBoardSpaceIds();
+    if (visibleSpaceIds !== null) body.space_ids = visibleSpaceIds;
 
     try {
         const response = await fetch('/api/tasks/auto-doing', {
@@ -715,44 +747,63 @@ function renderSpaceChips() {
     const container = document.getElementById('spaceChips');
     if (!container) return;
 
-    const chip = (label, value, active) => `
-        <button class="space-chip ${active ? 'active' : ''}" data-space-id="${value === null ? 'all' : value}">
+    const chip = (label, value, active, excluded) => `
+        <button class="space-chip ${active ? 'active' : ''} ${excluded ? 'excluded' : ''}"
+                data-space-id="${value === null ? 'all' : value}">
             ${label}
         </button>`;
 
     container.innerHTML =
-        chip('All spaces', null, boardSpaceFilter === null) +
+        chip('All spaces', null, boardSpaceFilter === null && boardExcludedSpaces.size === 0, false) +
         spaces.map(s => chip(escapeHtml(s.name), s.id,
-            boardSpaceFilter !== null && boardSpaceFilter.includes(s.id))).join('');
+            boardSpaceFilter !== null && boardSpaceFilter.includes(s.id),
+            boardExcludedSpaces.has(s.id))).join('');
 
-    // Plain click = show only that space; Ctrl+click or Alt+click = toggle the
-    // space in/out of the current multi-space selection (empty set falls back
-    // to all). Alt joins Ctrl because it's the app's multi-select modifier —
-    // an Alt+click must never collapse the filter to a single space.
+    // Plain click = show only that space; Ctrl+click = toggle the space
+    // in/out of the multi-space selection (empty set falls back to all);
+    // Alt+click = exclude the space — the chip greys out and its tasks are
+    // hidden until Alt+clicked again. "All spaces" resets both filter and
+    // exclusions.
     container.querySelectorAll('.space-chip').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const v = btn.dataset.spaceId;
             if (v === 'all') {
                 boardSpaceFilter = null;
+                boardExcludedSpaces.clear();
             } else {
                 const id = parseInt(v);
-                if (e.ctrlKey || e.metaKey || e.altKey) {
+                if (e.altKey) {
+                    if (boardExcludedSpaces.has(id)) {
+                        boardExcludedSpaces.delete(id);
+                    } else {
+                        boardExcludedSpaces.add(id);
+                        // An excluded space can't stay in the include set.
+                        if (boardSpaceFilter !== null) {
+                            boardSpaceFilter = boardSpaceFilter.filter(x => x !== id);
+                            if (boardSpaceFilter.length === 0) boardSpaceFilter = null;
+                        }
+                    }
+                } else if (e.ctrlKey || e.metaKey) {
                     const set = new Set(boardSpaceFilter || []);
                     set.has(id) ? set.delete(id) : set.add(id);
                     boardSpaceFilter = set.size ? Array.from(set) : null;
+                    boardExcludedSpaces.delete(id); // explicitly picked → visible
                 } else {
                     boardSpaceFilter = [id];
+                    boardExcludedSpaces.delete(id); // explicitly picked → visible
                 }
             }
             storeSpaceFilter();
+            storeExcludedSpaces();
             renderTasksView();
         });
     });
 }
 
 function boardFilteredTasks() {
-    if (boardSpaceFilter === null) return tasks;
-    return tasks.filter(t => boardSpaceFilter.includes(t.space_id));
+    return tasks.filter(t =>
+        (boardSpaceFilter === null || boardSpaceFilter.includes(t.space_id))
+        && !boardExcludedSpaces.has(t.space_id));
 }
 
 function renderBoard() {
