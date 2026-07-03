@@ -449,6 +449,14 @@ async function copySelectedAsMarkdown() {
     showAlert(`✓ Copied ${selected.length} task${selected.length > 1 ? 's' : ''} as markdown`, 'success');
 }
 
+// A modifier+mousedown is a click gesture (Shift=freeze, Ctrl=done,
+// Alt=select), never a drag: without this filter a few px of hand jitter
+// during the click starts a Sortable drag, which swallows the click and can
+// drop the card into a neighbouring column (= silent status change).
+function isModifierGesture(evt) {
+    return !!(evt.shiftKey || evt.ctrlKey || evt.altKey || evt.metaKey);
+}
+
 function initBoardSortables() {
     document.querySelectorAll('.board-col-cards').forEach(col => {
         new Sortable(col, {
@@ -459,6 +467,8 @@ function initBoardSortables() {
             // there — cards can still be dragged in/out of it.
             sort: col.dataset.status !== 'done',
             ghostClass: 'dragging',
+            filter: isModifierGesture,
+            preventOnFilter: false,
             onEnd: handleBoardDrop
         });
     });
@@ -680,8 +690,10 @@ function renderSpaceChips() {
         spaces.map(s => chip(escapeHtml(s.name), s.id,
             boardSpaceFilter !== null && boardSpaceFilter.includes(s.id))).join('');
 
-    // Plain click = show only that space; Ctrl+click = toggle the space in/out
-    // of the current multi-space selection (empty set falls back to all).
+    // Plain click = show only that space; Ctrl+click or Alt+click = toggle the
+    // space in/out of the current multi-space selection (empty set falls back
+    // to all). Alt joins Ctrl because it's the app's multi-select modifier —
+    // an Alt+click must never collapse the filter to a single space.
     container.querySelectorAll('.space-chip').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const v = btn.dataset.spaceId;
@@ -689,7 +701,7 @@ function renderSpaceChips() {
                 boardSpaceFilter = null;
             } else {
                 const id = parseInt(v);
-                if (e.ctrlKey || e.metaKey) {
+                if (e.ctrlKey || e.metaKey || e.altKey) {
                     const set = new Set(boardSpaceFilter || []);
                     set.has(id) ? set.delete(id) : set.add(id);
                     boardSpaceFilter = set.size ? Array.from(set) : null;
@@ -909,6 +921,8 @@ function initSortable() {
     sortable = new Sortable(taskList, {
         animation: 150,
         ghostClass: 'dragging',
+        filter: isModifierGesture,
+        preventOnFilter: false,
         onEnd: handleTaskReorder
     });
 }

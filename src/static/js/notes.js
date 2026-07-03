@@ -71,7 +71,9 @@ window.NotesView = (function () {
     }
 
     // Same chips as the kanban board: plain click = show only that space,
-    // Ctrl+click = toggle the space in/out of the multi-space selection.
+    // Ctrl+click or Alt+click = toggle the space in/out of the multi-space
+    // selection (Alt is the app's multi-select modifier — it must never
+    // collapse the filter to a single space).
     function renderSpaceChips() {
         const container = document.getElementById('notesSpaceChips');
         const chip = (label, value, active) => `
@@ -90,7 +92,7 @@ window.NotesView = (function () {
                     state.selectedSpaceIds = null;
                 } else {
                     const id = parseInt(v);
-                    if (e.ctrlKey || e.metaKey) {
+                    if (e.ctrlKey || e.metaKey || e.altKey) {
                         const set = new Set(state.selectedSpaceIds || []);
                         set.has(id) ? set.delete(id) : set.add(id);
                         state.selectedSpaceIds = set.size ? Array.from(set) : null;
@@ -232,11 +234,20 @@ window.NotesView = (function () {
     }
 
     // --- Editor ---
+    // Notes open rendered (EasyMDE preview mode) by default; clicking the
+    // preview switches to edit mode. Empty notes go straight to edit — an
+    // empty preview pane is a dead end.
+    function setPreviewMode(on) {
+        if (!easyMDE) return;
+        if (easyMDE.isPreviewActive() !== on) easyMDE.togglePreview();
+    }
+
     function clearEditor() {
         state.currentNote = null;
         state.editorDirty = false;
         state.lastCleaned = null;
         document.getElementById('noteTitle').value = '';
+        setPreviewMode(false);
         if (easyMDE) easyMDE.value('');
         setSaveIndicator('');
         setActiveButtonsDisabledState();
@@ -247,7 +258,11 @@ window.NotesView = (function () {
         state.currentNote = { ...note };
         state.lastCleaned = null;
         document.getElementById('noteTitle').value = note.title || '';
+        // Load the content with preview off (the preview pane only re-renders
+        // on toggle), then flip preview on for non-empty notes.
+        setPreviewMode(false);
         if (easyMDE) easyMDE.value(note.content_markdown || '');
+        setPreviewMode(!!(note.content_markdown || '').trim());
         state.editorDirty = false;
         setSaveIndicator('');
         renderList();
@@ -345,7 +360,7 @@ window.NotesView = (function () {
             }
             // Store the current editor content for single-step Undo BEFORE replacing.
             state.lastCleaned = easyMDE ? easyMDE.value() : '';
-            easyMDE.value(resp.content);
+            replaceEditorContent(resp.content);
             // easyMDE.value() fires the CM5 `change` event → scheduleSave() debounced PUT.
             setSaveIndicator('cleanified');
         } catch (e) {
@@ -355,11 +370,20 @@ window.NotesView = (function () {
         }
     }
 
+    // Replace the editor buffer, keeping an active preview in sync (the
+    // preview pane only re-renders on toggle, so flip it around the write).
+    function replaceEditorContent(content) {
+        const wasPreview = easyMDE.isPreviewActive();
+        if (wasPreview) easyMDE.togglePreview();
+        easyMDE.value(content);
+        if (wasPreview) easyMDE.togglePreview();
+    }
+
     function undoCleanify() {
         if (state.lastCleaned === null) return;
         const previous = state.lastCleaned;
         state.lastCleaned = null;
-        easyMDE.value(previous);
+        replaceEditorContent(previous);
         // easyMDE.value() fires the CM5 `change` event → scheduleSave() debounced PUT.
         setSaveIndicator('restored');
         setActiveButtonsDisabledState();
@@ -424,6 +448,9 @@ window.NotesView = (function () {
             autosave: { enabled: false },
             status: false,
             spellChecker: true,
+            // Side-by-side must stay inside the notes layout, not take over
+            // the whole screen (EasyMDE defaults to fullscreen side-by-side).
+            sideBySideFullscreen: false,
             toolbar: [
                 'bold', 'italic', 'strikethrough', '|',
                 'heading-1', 'heading-2', 'heading-3', '|',
@@ -449,6 +476,17 @@ window.NotesView = (function () {
         easyMDE.codemirror.on('cursorActivity', () => {
             const btn = document.getElementById('notePromoteBtn');
             btn.disabled = !(state.currentNote && easyMDE.codemirror.somethingSelected());
+        });
+        // Preview → edit: clicking anywhere on the rendered note switches
+        // back to the editor. Links keep their normal behavior, and the
+        // side-by-side live preview (.editor-preview-side) is not affected.
+        document.getElementById('view-notes').addEventListener('click', (e) => {
+            if (!easyMDE.isPreviewActive()) return;
+            if (e.target.closest('a')) return;
+            if (!e.target.closest('.editor-preview-full')) return;
+            setPreviewMode(false);
+            easyMDE.codemirror.refresh();
+            easyMDE.codemirror.focus();
         });
     }
 
