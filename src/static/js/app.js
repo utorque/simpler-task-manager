@@ -345,6 +345,12 @@ function initGlobalCtrlEnterSave() {
 function wireTaskClickDelegation(containerId, selector) {
     const container = document.getElementById(containerId);
     if (!container) return;
+    // Shift+mousedown extends the browser's text selection before the click
+    // handler runs; on a task item Shift+click is a command (cycle status /
+    // freeze), so suppress the selection gesture.
+    container.addEventListener('mousedown', (e) => {
+        if (e.shiftKey && e.target.closest(selector)) e.preventDefault();
+    });
     container.addEventListener('click', (e) => {
         const item = e.target.closest(selector);
         if (!item) return;
