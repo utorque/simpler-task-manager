@@ -15,6 +15,12 @@ schedule_bp = Blueprint('schedule', __name__)
 @schedule_bp.route('/api/schedule', methods=['POST'])
 @login_required
 def auto_schedule():
+    # Optional scoping: `task_ids` restricts (re)scheduling to those tasks
+    # (the board sends its displayed Doing tasks). Absent/None = schedule all.
+    data = request.get_json(silent=True) or {}
+    task_ids = data.get('task_ids')
+    scoped_ids = set(task_ids) if task_ids is not None else None
+
     tasks = Task.query.filter_by(completed=False).order_by(
         Task.priority.desc(), Task.deadline.asc()).all()
 
@@ -32,9 +38,17 @@ def auto_schedule():
     spaces = Space.query.all()
     space_constraints = {space.id: space.get_time_constraints() for space in spaces}
 
-    # The scheduler is pure-over-data: adapt ORM rows at the seam.
-    scheduled_tasks = schedule_tasks(
-        [to_schedulable(t) for t in tasks], external_events, space_constraints)
+    # The scheduler is pure-over-data: adapt ORM rows at the seam. Out-of-scope
+    # tasks are marked frozen so the scheduler never moves them while their
+    # existing slots still count as busy (no double-booking of scoped tasks).
+    schedulables = []
+    for t in tasks:
+        schedulable = to_schedulable(t)
+        if scoped_ids is not None and schedulable['id'] not in scoped_ids:
+            schedulable['frozen'] = True
+        schedulables.append(schedulable)
+
+    scheduled_tasks = schedule_tasks(schedulables, external_events, space_constraints)
 
     for task_data in scheduled_tasks:
         task = db.session.get(Task, task_data['id'])

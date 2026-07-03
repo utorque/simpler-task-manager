@@ -7,11 +7,13 @@ load_dotenv()
 # startup (it is not expected to be, but Config must never crash app boot).
 _NOTES_CLEANIFY_PROMPT_DEFAULT = (
     "You are a tidying assistant. Rewrite the note to make it more readable "
-    "without changing its meaning. Tidy punctuation, normalize line breaks "
-    "and list formatting. Do not invent facts, summarize away specifics, "
-    "rename entities, or restate clear sections. If a section's intent is "
-    "unclear, leave it unchanged rather than guessing. Output only the tidied "
-    "note in markdown."
+    "without changing its meaning, structured as: one '# Title' line, the "
+    "note date in italics directly below it, '##' subtitles when the note "
+    "covers several topics, key points in bold, and '-' bullets for details. "
+    "Tidy punctuation, normalize line breaks and list formatting. Do not "
+    "invent facts, summarize away specifics, or rename entities. If a "
+    "section's intent is unclear, leave it unchanged rather than guessing. "
+    "Output only the tidied note in markdown."
 )
 
 

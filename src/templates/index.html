@@ -42,7 +42,7 @@
             </button>
         </div>
         <div class="app-actions">
-            <button class="btn app-action-btn" id="scheduleBtn" title="Auto-schedule all — press S">
+            <button class="btn app-action-btn" id="scheduleBtn" title="Auto-schedule — press S (from the board: only the Doing tasks in view)">
                 <i class="fas fa-calendar-check"></i>
             </button>
             <button class="btn app-action-btn" id="addCalendarBtn" title="Manage calendars">
@@ -215,11 +215,19 @@
 
         <!-- ===== Notes destination ===== -->
         <section id="view-notes" class="app-view" style="display: none;">
+            <!-- Secondary header, like the tasks toolbar: space filter chips + download -->
+            <div class="notes-toolbar">
+                <!-- Same chips as the kanban board: click = one space, Ctrl+click = add/remove spaces -->
+                <div class="space-chips" id="notesSpaceChips"></div>
+                <button class="btn notes-download-btn" id="downloadNotesBtn"
+                        title="Download the notes in view as markdown (Ctrl+click notes in the list to download only those)">
+                    <i class="fas fa-download"></i> <span id="downloadNotesLabel">Download</span>
+                </button>
+            </div>
             <div class="notes-layout">
                 <aside class="notes-list-panel">
-                    <div class="d-flex gap-2 align-items-center mb-2">
-                        <!-- Same chips as the kanban board: click = one space, Ctrl+click = add/remove spaces -->
-                        <div class="space-chips flex-grow-1" id="notesSpaceChips"></div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 text-muted">Notes</h6>
                         <button class="btn btn-sm btn-success" id="newNoteBtn" title="New note">
                             <i class="fas fa-plus"></i>
                         </button>
@@ -569,7 +577,7 @@
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
                             <tr><td><kbd>Enter</kbd></td><td>Create task with AI (header or board quick-add input)</td></tr>
                             <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Save from wherever you're typing (any modal, notes, space editor…)</td></tr>
-                            <tr><td><kbd>S</kbd></td><td>Auto-schedule all tasks</td></tr>
+                            <tr><td><kbd>S</kbd></td><td>Auto-schedule (from the board: only the Doing tasks in view; elsewhere: all tasks)</td></tr>
                             <tr><td><kbd>?</kbd></td><td>This help</td></tr>
                             <tr><td><kbd>Esc</kbd></td><td>Close modal / cancel inline add / leave input</td></tr>
                         </tbody>
@@ -606,6 +614,8 @@
                         <tbody>
                             <tr><td>Select text → <i class="fas fa-plus-square"></i></td><td>Promote selection to a task (AI)</td></tr>
                             <tr><td><i class="fas fa-broom"></i></td><td>Cleanify the note (AI tidy, with Undo)</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Click</kbd> a note in the list</td><td>Add/remove it from the download selection (<kbd>Esc</kbd> clears)</td></tr>
+                            <tr><td><i class="fas fa-download"></i> in the toolbar</td><td>Download the selected notes — or every note in view — as markdown</td></tr>
                         </tbody>
                     </table>
                     <h6 class="text-muted">Mail</h6>

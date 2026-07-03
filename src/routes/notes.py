@@ -1,5 +1,7 @@
 """Notes CRUD, Cleanify, and promote-to-task routes."""
 
+from datetime import datetime
+
 from flask import Blueprint, current_app, jsonify, request
 
 from ai_parser import cleanify_note_with_ai, parse_task_with_ai
@@ -96,6 +98,9 @@ def cleanify_note(note_id):
         f"\n\nNote's Space context:\nName: {space.name}\n"
         f"Description: {space.description or ''}"
     )
+    # The structured output puts the note's date below the title.
+    note_date = (note.created_at or datetime.utcnow()).strftime('%Y-%m-%d')
+    system_prompt += f"\n\nNote date (put below the title): {note_date}"
 
     content = cleanify_note_with_ai(note.content_markdown, system_prompt)
     return jsonify({'content': content})

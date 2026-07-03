@@ -1038,15 +1038,28 @@ async function parseTask() {
     btn.disabled = false;
 }
 
-// Auto-schedule tasks
+// Auto-schedule tasks. From the kanban board, only the currently displayed
+// Doing tasks are (re)scheduled — everything else keeps its current slots.
+// From any other view, all incomplete tasks are scheduled as before.
 async function autoSchedule() {
     const btn = document.getElementById('scheduleBtn');
     const originalText = btn.innerHTML;
     btn.innerHTML = '<span class="loading"></span>';
     btn.disabled = true;
 
+    let body = null;
+    if (currentDestination === 'tasks' && tasksSubview === 'board') {
+        body = {
+            task_ids: boardFilteredTasks()
+                .filter(t => t.status === 'doing' && !t.completed)
+                .map(t => t.id),
+        };
+    }
+
     const response = await fetch('/api/schedule', {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
     });
 
     if (response.ok) {

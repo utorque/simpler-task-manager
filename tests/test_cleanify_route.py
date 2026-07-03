@@ -62,6 +62,14 @@ def test_cleanify_injects_space_description_into_system_prompt(client, stub_ai_p
     assert sample_note.space_rel.name in captured_system_prompt
 
 
+def test_cleanify_injects_note_date_into_system_prompt(client, stub_ai_provider_spy, sample_note):
+    login(client)
+    client.post(f'/api/notes/{sample_note.id}/cleanify')
+    captured_system_prompt = stub_ai_provider_spy.captured_system_prompt
+    expected_date = sample_note.created_at.strftime('%Y-%m-%d')
+    assert f'Note date (put below the title): {expected_date}' in captured_system_prompt
+
+
 def test_cleanify_returns_original_on_ai_failure(client, stub_ai_provider_raising, sample_note):
     login(client)
     resp = client.post(f'/api/notes/{sample_note.id}/cleanify')

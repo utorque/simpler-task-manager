@@ -767,15 +767,34 @@ body {
     padding: 16px 20px;
 }
 
-/* ===== Tasks destination: toolbar (chips + board/overview toggle) ===== */
+/* ===== Tasks destination: toolbar (chips + board/overview toggle) =====
+   The Notes destination reuses the same secondary-header layout (chips +
+   right-aligned action). */
 
-.tasks-toolbar {
+.tasks-toolbar,
+.notes-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
     margin-bottom: 14px;
+}
+
+/* Very slim download action on the right of the notes toolbar */
+.notes-download-btn {
+    border: 1px solid #cbd5e0;
+    color: #4a5568;
+    background: white;
+    padding: 3px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.notes-download-btn:hover {
+    border-color: #667eea;
+    color: #667eea;
 }
 
 .space-chips {
@@ -1036,11 +1055,12 @@ body {
 .notes-layout {
     display: flex;
     gap: 16px;
-    height: 100%;
+    /* Same trick as .board: leave room for the toolbar above. */
+    height: calc(100% - 56px);
 }
 
 .notes-list-panel {
-    width: 320px;
+    width: 380px;
     flex-shrink: 0;
     background: #fff;
     border: 2px solid #e0e6ed;
@@ -1304,7 +1324,8 @@ body {
     .nav-tab kbd { display: none; }
     .calendar-layout, .notes-layout, .mail-layout, .spaces-layout { flex-direction: column; }
     .calendar-sidebar, .notes-list-panel, .mail-sidebar, .spaces-list-panel { width: 100%; max-height: 40vh; }
-    .board { flex-wrap: wrap; height: auto; }
+    .board, .notes-layout { height: auto; }
+    .board { flex-wrap: wrap; }
     .board-col { min-width: 45%; }
 }
 .notes-container { margin-top: 1rem; }
@@ -1315,6 +1336,11 @@ body {
 }
 .note-row:hover { background: #f8f9fa; }
 .note-row.active { background: #e7f1ff; }
+/* Ctrl+click download selection */
+.note-row.selected {
+    background: #fff8e6;
+    box-shadow: inset 3px 0 0 #f6ad55;
+}
 .note-row-title { font-weight: 600; color: #212529; }
 
 /* Space tag on note rows, shown when viewing several spaces at once */
