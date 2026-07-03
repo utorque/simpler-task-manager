@@ -17,6 +17,9 @@ window.NotesView = (function () {
         // otherwise a non-empty array of space ids (Ctrl+click multi-select).
         selectedSpaceIds: null,
         notes: [],
+        // Ctrl+click download selection in the notes list (ids). Empty set =
+        // no selection → the download button exports every note in view.
+        selectedNoteIds: new Set(),
         currentNote: null,        // {id, ...} once persisted (POST issued); null until then
         editorDirty: false,
         saveTimer: null,
@@ -120,6 +123,9 @@ window.NotesView = (function () {
             ? ''
             : '?' + state.selectedSpaceIds.map(id => `space_id=${id}`).join('&');
         state.notes = await api(`/api/notes${params}`);
+        // Prune the download selection: keep only notes still in view.
+        const visible = new Set(state.notes.map(n => n.id));
+        state.selectedNoteIds = new Set([...state.selectedNoteIds].filter(id => visible.has(id)));
         renderList();
     }
 
@@ -148,6 +154,7 @@ window.NotesView = (function () {
                 <i class="fas fa-sticky-note fa-3x mb-3"></i>
                 <p>No notes yet. Click + to capture a thought.</p>
             </div>`;
+            updateDownloadButton();
             return;
         }
         container.innerHTML = '';
@@ -158,6 +165,7 @@ window.NotesView = (function () {
             const row = document.createElement('div');
             row.className = 'note-row';
             if (state.currentNote && state.currentNote.id === n.id) row.classList.add('active');
+            if (state.selectedNoteIds.has(n.id)) row.classList.add('selected');
             row.innerHTML = `
                 <div class="note-row-title">${escapeHtml(title)}
                     ${showSpace && spaceName(n.space_id) ? `<span class="note-row-space">${escapeHtml(spaceName(n.space_id))}</span>` : ''}
@@ -165,9 +173,56 @@ window.NotesView = (function () {
                 <div class="note-row-preview">${escapeHtml(previewContent(n.content_markdown))}</div>
                 <div class="note-row-time">${relativeTime(n.updated_at)}</div>
             `;
-            row.addEventListener('click', () => openNote(n));
+            // Ctrl+click = toggle the note in/out of the download selection;
+            // plain click = open it (selection untouched, Esc clears it).
+            row.addEventListener('click', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    state.selectedNoteIds.has(n.id)
+                        ? state.selectedNoteIds.delete(n.id)
+                        : state.selectedNoteIds.add(n.id);
+                    renderList();
+                } else {
+                    openNote(n);
+                }
+            });
             container.appendChild(row);
         }
+        updateDownloadButton();
+    }
+
+    function updateDownloadButton() {
+        const label = document.getElementById('downloadNotesLabel');
+        const btn = document.getElementById('downloadNotesBtn');
+        const count = state.selectedNoteIds.size;
+        label.textContent = count ? `Download ${count} selected` : 'Download';
+        btn.disabled = state.notes.length === 0;
+    }
+
+    // --- Download (selected notes, or every note in view) ---
+    function notesToMarkdown(notes) {
+        return notes.map(n => {
+            const title = n.title && n.title.trim() ? n.title.trim() : 'Untitled';
+            const content = (n.content_markdown || '').trim();
+            // Skip the heading when the note body already starts with one
+            // (e.g. a cleanified note leads with its own `# Title`).
+            const heading = content.startsWith('# ') ? '' : `# ${title}\n\n`;
+            return heading + content;
+        }).join('\n\n---\n\n') + '\n';
+    }
+
+    function downloadNotes() {
+        const selected = state.selectedNoteIds.size
+            ? state.notes.filter(n => state.selectedNoteIds.has(n.id))
+            : state.notes;
+        if (!selected.length) return;
+        const blob = new Blob([notesToMarkdown(selected)], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `notes-${new Date().toISOString().slice(0, 10)}.md`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
     }
 
     function escapeHtml(s) {
@@ -399,6 +454,17 @@ window.NotesView = (function () {
 
     function initWiring() {
         document.getElementById('newNoteBtn').addEventListener('click', newNote);
+        document.getElementById('downloadNotesBtn').addEventListener('click', downloadNotes);
+        // Esc clears the download selection (only when Notes is the visible
+        // destination and the user is not typing somewhere).
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || !state.selectedNoteIds.size) return;
+            if (document.getElementById('view-notes').style.display === 'none') return;
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            state.selectedNoteIds.clear();
+            renderList();
+        });
         document.getElementById('noteTitle').addEventListener('input', scheduleSave);
         document.getElementById('cleanifyBtn').addEventListener('click', cleanifyCurrentNote);
         document.getElementById('undoCleanifyBtn').addEventListener('click', undoCleanify);
