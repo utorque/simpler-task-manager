@@ -96,6 +96,8 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Task interactions share one convention everywhere:
     // click = edit, Ctrl+click = done, Shift+click = freeze, Alt+click = select.
+    // Board-card exception: Shift+click advances the status instead of
+    // freezing (cycleTaskStatus).
     wireTaskClickDelegation('taskList', '.task-item');
     wireTaskClickDelegation('spaceCardsContainer', '.space-task-item');
     wireTaskClickDelegation('boardView', '.board-card');
@@ -353,11 +355,44 @@ function wireTaskClickDelegation(containerId, selector) {
             toggleTaskCompletion(taskId);
         } else if (e.shiftKey) {
             e.preventDefault();
-            toggleTaskFreeze(taskId);
+            // Board cards: Shift+click walks the task through the workflow.
+            // Everywhere else keeps the Shift+click = freeze convention.
+            if (item.classList.contains('board-card')) {
+                cycleTaskStatus(taskId);
+            } else {
+                toggleTaskFreeze(taskId);
+            }
         } else {
             editTask(taskId);
         }
     });
+}
+
+// Shift+click on a board card advances the task one workflow step without
+// opening the modal: To do → Doing, Doing → Blocked, Blocked → Doing,
+// Done → Doing. Doing is the hub — everything not in progress is one
+// Shift+click away from being worked on, and Doing ⇄ Blocked toggles.
+const SHIFT_CLICK_NEXT_STATUS = { todo: 'doing', doing: 'blocked', blocked: 'doing', done: 'doing' };
+const STATUS_LABELS = { todo: 'To do', doing: 'Doing', blocked: 'Blocked', done: 'Done' };
+
+async function cycleTaskStatus(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const next = SHIFT_CLICK_NEXT_STATUS[task.status] || 'doing';
+
+    const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next })
+    });
+
+    if (response.ok) {
+        await loadTasks();
+        calendar.refetchEvents();
+        showAlert(`→ ${STATUS_LABELS[next]}`, 'info');
+    } else {
+        showAlert('Error updating task', 'danger');
+    }
 }
 
 // ===== Kanban board =====

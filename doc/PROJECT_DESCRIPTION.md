@@ -226,7 +226,8 @@ One page, one header:
 | `Ctrl+Enter` | Save from wherever you're typing (open modal's primary action, notes autosave flush, space editor save; capture inputs create the task) |
 | `S` | Auto-schedule all |
 | `?` | Shortcuts help |
-| Click / `Ctrl`+Click / `Shift`+Click on any task | Edit / toggle done / toggle freeze (same convention on the board, the list, the overview, and calendar events) |
+| Click / `Ctrl`+Click / `Shift`+Click on any task | Edit / toggle done / toggle freeze (same convention on the list, the overview, and calendar events) |
+| `Shift`+Click a board card | Advance the status: To do → Doing, Doing ⇄ Blocked, Done → Doing (board-only exception to the freeze convention) |
 | `Ctrl`+Click a calendar day header | Freeze/unfreeze the whole day |
 | Drag a board card to another column | Change its status |
 | Drag a board card within its column | Reorder it (nudges only that task's priority) |
