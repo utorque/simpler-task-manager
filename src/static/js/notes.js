@@ -5,14 +5,17 @@
 
 window.NotesView = (function () {
 
-    const STORAGE_SPACE_KEY = 'notes.selectedSpaceId';
+    const STORAGE_SPACE_KEY = 'notes.selectedSpaceId';       // legacy single-space key (migrated)
+    const STORAGE_SPACES_KEY = 'notes.selectedSpaceIds';     // JSON array, or 'all'
     const AUTOSAVE_DEBOUNCE_MS = 800;
     const CONTENT_PREVIEW_LEN = 80;
 
     const state = {
         initialized: false,
         spaces: [],
-        selectedSpaceId: null,
+        // Same convention as the kanban board chips: null = all spaces,
+        // otherwise a non-empty array of space ids (Ctrl+click multi-select).
+        selectedSpaceIds: null,
         notes: [],
         currentNote: null,        // {id, ...} once persisted (POST issued); null until then
         editorDirty: false,
@@ -36,27 +39,87 @@ window.NotesView = (function () {
     }
 
     // --- Spaces ---
+    function restoreSelection() {
+        const raw = localStorage.getItem(STORAGE_SPACES_KEY);
+        if (raw === 'all') return null;
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                const ids = parsed.filter(id => state.spaces.some(s => s.id === id));
+                if (ids.length) return ids;
+                return null;
+            }
+        } catch (e) { /* fall through to legacy key */ }
+        // Legacy single-space dropdown selection.
+        const legacy = Number(localStorage.getItem(STORAGE_SPACE_KEY));
+        if (legacy && state.spaces.some(s => s.id === legacy)) return [legacy];
+        return null;
+    }
+
+    function storeSelection() {
+        localStorage.setItem(STORAGE_SPACES_KEY,
+            state.selectedSpaceIds === null ? 'all' : JSON.stringify(state.selectedSpaceIds));
+    }
+
     async function loadSpaces() {
         state.spaces = await api('/api/spaces');
-        const sel = document.getElementById('spaceSwitcher');
-        sel.innerHTML = '';
-        for (const sp of state.spaces) {
-            const opt = document.createElement('option');
-            opt.value = sp.id;
-            opt.textContent = sp.name;
-            sel.appendChild(opt);
-        }
-        const saved = localStorage.getItem(STORAGE_SPACE_KEY);
-        const initial = saved && state.spaces.find(s => String(s.id) === saved)
-            ? Number(saved)
-            : (state.spaces[0] && state.spaces[0].id);
-        state.selectedSpaceId = initial;
-        sel.value = String(initial);
+        state.selectedSpaceIds = restoreSelection();
+        renderSpaceChips();
+    }
+
+    // Same chips as the kanban board: plain click = show only that space,
+    // Ctrl+click = toggle the space in/out of the multi-space selection.
+    function renderSpaceChips() {
+        const container = document.getElementById('notesSpaceChips');
+        const chip = (label, value, active) => `
+            <button class="space-chip ${active ? 'active' : ''}" data-space-id="${value === null ? 'all' : value}">
+                ${label}
+            </button>`;
+        container.innerHTML =
+            chip('All', null, state.selectedSpaceIds === null) +
+            state.spaces.map(sp => chip(escapeHtml(sp.name), sp.id,
+                state.selectedSpaceIds !== null && state.selectedSpaceIds.includes(sp.id))).join('');
+
+        container.querySelectorAll('.space-chip').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const v = btn.dataset.spaceId;
+                if (v === 'all') {
+                    state.selectedSpaceIds = null;
+                } else {
+                    const id = parseInt(v);
+                    if (e.ctrlKey || e.metaKey) {
+                        const set = new Set(state.selectedSpaceIds || []);
+                        set.has(id) ? set.delete(id) : set.add(id);
+                        state.selectedSpaceIds = set.size ? Array.from(set) : null;
+                    } else {
+                        state.selectedSpaceIds = [id];
+                    }
+                }
+                storeSelection();
+                renderSpaceChips();
+                loadNotes();
+            });
+        });
+    }
+
+    // The space a NEW note lands in: the first selected space, or the first
+    // space overall when viewing all spaces.
+    function primarySpaceId() {
+        if (state.selectedSpaceIds !== null) return state.selectedSpaceIds[0];
+        return state.spaces[0] && state.spaces[0].id;
+    }
+
+    function spaceName(spaceId) {
+        const sp = state.spaces.find(s => s.id === spaceId);
+        return sp ? sp.name : '';
     }
 
     // --- Notes list ---
     async function loadNotes() {
-        state.notes = await api(`/api/notes?space_id=${state.selectedSpaceId}`);
+        const params = state.selectedSpaceIds === null
+            ? ''
+            : '?' + state.selectedSpaceIds.map(id => `space_id=${id}`).join('&');
+        state.notes = await api(`/api/notes${params}`);
         renderList();
     }
 
@@ -88,13 +151,17 @@ window.NotesView = (function () {
             return;
         }
         container.innerHTML = '';
+        // When viewing several spaces (or all), tag each note with its space.
+        const showSpace = state.selectedSpaceIds === null || state.selectedSpaceIds.length > 1;
         for (const n of state.notes) {
             const title = n.title && n.title.trim() ? n.title : 'Untitled';
             const row = document.createElement('div');
             row.className = 'note-row';
             if (state.currentNote && state.currentNote.id === n.id) row.classList.add('active');
             row.innerHTML = `
-                <div class="note-row-title">${escapeHtml(title)}</div>
+                <div class="note-row-title">${escapeHtml(title)}
+                    ${showSpace && spaceName(n.space_id) ? `<span class="note-row-space">${escapeHtml(spaceName(n.space_id))}</span>` : ''}
+                </div>
                 <div class="note-row-preview">${escapeHtml(previewContent(n.content_markdown))}</div>
                 <div class="note-row-time">${relativeTime(n.updated_at)}</div>
             `;
@@ -170,7 +237,7 @@ window.NotesView = (function () {
                 const created = await api('/api/notes', {
                     method: 'POST',
                     body: JSON.stringify({
-                        space_id: state.selectedSpaceId,
+                        space_id: primarySpaceId(),
                         title,
                         content_markdown: content,
                     }),
@@ -337,11 +404,12 @@ window.NotesView = (function () {
         document.getElementById('undoCleanifyBtn').addEventListener('click', undoCleanify);
         document.getElementById('deleteNoteBtn').addEventListener('click', deleteCurrentNote);
         document.getElementById('notePromoteBtn').addEventListener('click', promoteSelectionToTask);
-        document.getElementById('spaceSwitcher').addEventListener('change', (e) => {
-            state.selectedSpaceId = Number(e.target.value);
-            localStorage.setItem(STORAGE_SPACE_KEY, String(state.selectedSpaceId));
-            loadNotes();
-        });
+    }
+
+    // Immediate save (Ctrl+Enter): flush the debounced autosave right now.
+    function saveNow() {
+        cancelPendingSave();
+        flushSave();
     }
 
     async function enter() {
@@ -353,18 +421,14 @@ window.NotesView = (function () {
             await loadNotes();
             clearEditor();
         } else {
-            // Space list may have changed while we were away.
-            const current = state.selectedSpaceId;
+            // Space list may have changed while we were away; loadSpaces
+            // re-validates the stored selection against the fresh list.
             await loadSpaces();
-            if (state.spaces.find(s => s.id === current)) {
-                state.selectedSpaceId = current;
-                document.getElementById('spaceSwitcher').value = String(current);
-            }
             await loadNotes();
         }
         // CodeMirror mis-measures when initialized while hidden.
         if (easyMDE) easyMDE.codemirror.refresh();
     }
 
-    return { enter };
+    return { enter, saveNow };
 })();

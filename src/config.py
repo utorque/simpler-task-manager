@@ -53,6 +53,23 @@ def load_email_to_task_prompt():
     except FileNotFoundError:
         return _EMAIL_TO_TASK_PROMPT_DEFAULT
 
+
+_TASK_SELECTION_PROMPT_DEFAULT = (
+    "You are a task selection assistant. The user states what they want to "
+    "work on; you are given a list of candidate TODO tasks with ids. Return "
+    "ONLY a JSON array of the ids of the tasks matching the user's intent, "
+    "e.g. [3, 12], or [] when nothing matches."
+)
+
+
+def load_task_selection_prompt():
+    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', 'task_selection.md')
+    try:
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return _TASK_SELECTION_PROMPT_DEFAULT
+
 class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     SQLALCHEMY_DATABASE_URI = 'sqlite:///tasks.db'
@@ -66,3 +83,4 @@ class Config:
     SYSTEM_PROMPT = load_system_prompt()
     NOTES_CLEANIFY_PROMPT = load_notes_cleanify_prompt()
     EMAIL_TO_TASK_PROMPT = load_email_to_task_prompt()
+    TASK_SELECTION_PROMPT = load_task_selection_prompt()

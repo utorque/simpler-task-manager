@@ -11,12 +11,15 @@ let taskModal;
 let calendarModal;
 let addTaskModal;
 let helpModal;
+let autoDoingModal;
 let sortable;
 let showCompletedTasks = false;
 let overviewShowDone = localStorage.getItem('overviewShowDone') === 'true';
 let focusedSpace = localStorage.getItem('focusedSpace') || null;
 let currentDestination = null;
 let tasksSubview = localStorage.getItem('tasksSubview') || 'board';
+// null = all spaces; otherwise a non-empty array of space ids. Plain click on
+// a chip selects that one space; Ctrl+click toggles it in/out of the set.
 let boardSpaceFilter = parseStoredSpaceFilter();
 
 // Multi-selection (kanban board only). Alt+click toggles a card in/out of
@@ -30,8 +33,21 @@ const DONE_COLUMN_LIMIT = 30;
 function parseStoredSpaceFilter() {
     const raw = localStorage.getItem('boardSpaceFilter');
     if (raw === null || raw === 'all') return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+            const ids = parsed.filter(Number.isInteger);
+            return ids.length ? ids : null;
+        }
+        if (Number.isInteger(parsed)) return [parsed]; // legacy single-id format
+    } catch (e) { /* legacy non-JSON value falls through */ }
     const n = parseInt(raw);
-    return Number.isNaN(n) ? null : n;
+    return Number.isNaN(n) ? null : [n];
+}
+
+function storeSpaceFilter() {
+    localStorage.setItem('boardSpaceFilter',
+        boardSpaceFilter === null ? 'all' : JSON.stringify(boardSpaceFilter));
 }
 
 // Initialize app
@@ -41,6 +57,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     calendarModal = new bootstrap.Modal(document.getElementById('calendarModal'));
     addTaskModal = new bootstrap.Modal(document.getElementById('addTaskModal'));
     helpModal = new bootstrap.Modal(document.getElementById('helpModal'));
+    autoDoingModal = new bootstrap.Modal(document.getElementById('autoDoingModal'));
 
     // Initialize calendar
     initCalendar();
@@ -104,19 +121,30 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     });
 
-    // Allow Ctrl+Enter in add task modal
-    document.getElementById('addTaskInput').addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.key === 'Enter') {
-            createTaskFromModal();
-        }
-    });
-
     // Auto-focus on add task modal when shown
     document.getElementById('addTaskModal').addEventListener('shown.bs.modal', function() {
         document.getElementById('addTaskInput').focus();
     });
 
+    // Auto-select doing: magic button in the Doing column header opens the
+    // "what do you want to do?" modal; AI moves the matching to-dos to Doing.
+    document.getElementById('autoDoingBtn').addEventListener('click', () => {
+        document.getElementById('autoDoingInput').value = '';
+        autoDoingModal.show();
+    });
+    document.getElementById('autoDoingModal').addEventListener('shown.bs.modal', function() {
+        document.getElementById('autoDoingInput').focus();
+    });
+    document.getElementById('autoDoingSubmitBtn').addEventListener('click', autoSelectDoing);
+    document.getElementById('autoDoingInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            autoSelectDoing();
+        }
+    });
+
     initKeyboardShortcuts();
+    initGlobalCtrlEnterSave();
 });
 
 // ===== Destination switching (one header, N views) =====
@@ -237,6 +265,51 @@ function initKeyboardShortcuts() {
                 break;
         }
     });
+}
+
+// Global Ctrl+Enter = save, from any text input in the app. Capture phase so
+// it wins over per-widget handlers (CodeMirror included); when a context is
+// handled we stopPropagation so nothing double-fires.
+function initGlobalCtrlEnterSave() {
+    document.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter') return;
+        if (!isTypingContext(e.target)) return;
+
+        // 1) Inside an open modal: the footer's primary button IS the save
+        // action (task edit, add-task, calendars, mailbox, auto-doing,
+        // task-draft confirm…).
+        const modal = e.target.closest('.modal.show') || document.querySelector('.modal.show');
+        if (modal) {
+            const btn = modal.querySelector('.modal-footer .btn-primary');
+            if (btn && !btn.disabled) {
+                e.preventDefault();
+                e.stopPropagation();
+                btn.click();
+            }
+            return;
+        }
+
+        // 2) Notes editor (title or markdown body): flush the debounced
+        // autosave immediately.
+        if (e.target.closest('#view-notes')) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.NotesView && window.NotesView.saveNow) window.NotesView.saveNow();
+            return;
+        }
+
+        // 3) Space editor: same as clicking Save.
+        if (e.target.closest('#view-spaces')) {
+            e.preventDefault();
+            e.stopPropagation();
+            document.getElementById('spaceSaveBtn').click();
+            return;
+        }
+
+        // 4) Inputs whose plain Enter already saves (header quick capture,
+        // board inline add): their own keydown handler treats Ctrl+Enter
+        // like Enter, so fall through without touching the event.
+    }, true);
 }
 
 // Shared click convention for every task representation.
@@ -381,7 +454,10 @@ function initBoardSortables() {
         new Sortable(col, {
             group: 'board',
             animation: 150,
-            sort: false, // intra-column order = priority/deadline (PrePRD: dedicated ordinal deferred)
+            // Intra-column drag reorders (nudges only the dragged task's
+            // priority). Done stays completion-time ordered, so no sorting
+            // there — cards can still be dragged in/out of it.
+            sort: col.dataset.status !== 'done',
             ghostClass: 'dragging',
             onEnd: handleBoardDrop
         });
@@ -397,7 +473,14 @@ async function handleBoardDrop(evt) {
     // column; otherwise it's a normal single-card move.
     const isMulti = selectedTaskIds.has(draggedId) && selectedTaskIds.size > 1;
 
-    if (newStatus === oldStatus) return;
+    // Same-column drop = manual reordering: change ONLY the dragged task's
+    // priority so it sorts where it was dropped. Cross-column drops below
+    // keep their status-only semantics and never touch priorities.
+    if (newStatus === oldStatus) {
+        if (evt.newIndex === evt.oldIndex || newStatus === 'done') return;
+        await reorderDraggedTask(evt.to, '.board-card', draggedId);
+        return;
+    }
 
     const ids = isMulti ? Array.from(selectedTaskIds) : [draggedId];
     let fail = 0;
@@ -419,6 +502,49 @@ async function handleBoardDrop(evt) {
     calendar.refetchEvents();
 }
 
+// ===== Manual drag-reorder (board columns + calendar sidebar list) =====
+//
+// Lists are sorted by priority desc; dropping a card at a new spot nudges
+// ONLY the dragged task's priority to a value between its new neighbours
+// (fractional values allowed — the server stores floats and clamps to 0-10).
+// No other task is ever touched.
+
+function computeReorderPriority(prevEl, nextEl) {
+    const priorityOf = el => {
+        const t = el && tasks.find(x => x.id === parseInt(el.dataset.taskId));
+        return t ? t.priority : null;
+    };
+    const above = priorityOf(prevEl);
+    const below = priorityOf(nextEl);
+    if (above === null && below === null) return null; // alone in the list
+    if (above === null) return Math.min(10, below + 1); // dropped at the top
+    if (below === null) return Math.max(0, above - 1);  // dropped at the bottom
+    // Between two equal priorities there is nothing between to land on —
+    // join the tie (secondary deadline/creation ordering takes over).
+    if (above === below) return above;
+    return Math.round(((above + below) / 2) * 1000) / 1000;
+}
+
+async function reorderDraggedTask(containerEl, itemSelector, draggedId) {
+    const items = Array.from(containerEl.querySelectorAll(itemSelector));
+    const idx = items.findIndex(el => parseInt(el.dataset.taskId) === draggedId);
+    if (idx === -1) return;
+
+    const newPriority = computeReorderPriority(items[idx - 1] || null, items[idx + 1] || null);
+    const task = tasks.find(t => t.id === draggedId);
+    if (newPriority === null || !task || task.priority === newPriority) return;
+
+    const response = await fetch('/api/tasks/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: draggedId, priority: newPriority })
+    });
+    if (!response.ok) {
+        showAlert('Error reordering task', 'danger');
+    }
+    await loadTasks();
+}
+
 function initBoardInlineAdd() {
     // Each kanban column always shows a quick-add input. The "+" button in the
     // column header focuses that column's input (it no longer toggles
@@ -426,7 +552,9 @@ function initBoardInlineAdd() {
     // filtered space); Esc clears the text but leaves the form open for rapid
     // entry. While the AI parse request is in flight, the "+" icon is swapped
     // for a spinner and the input is disabled so the user sees feedback.
-    document.querySelectorAll('.board-col-add').forEach(btn => {
+    // [data-status] scoping keeps other header buttons reusing the
+    // .board-col-add style (e.g. the Doing auto-select magic button) out.
+    document.querySelectorAll('.board-col-add[data-status]').forEach(btn => {
         btn.addEventListener('click', () => {
             const form = document.querySelector(`.board-inline-add[data-status="${btn.dataset.status}"]`);
             const input = form.querySelector('input');
@@ -459,9 +587,12 @@ function initBoardInlineAdd() {
             // priority/duration inference, and multi-task split. The column the
             // user typed in is honored via `force_status`; the active board space
             // filter scopes the AI prompt to that single space (hard scope) when
-            // set. "All spaces" omits `restrict_space` entirely.
+            // exactly one space is selected. "All spaces" and multi-space
+            // selections omit `restrict_space` entirely.
             const body = { text: title, force_status: form.dataset.status };
-            if (boardSpaceFilter !== null) body.restrict_space = boardSpaceFilter;
+            if (boardSpaceFilter !== null && boardSpaceFilter.length === 1) {
+                body.restrict_space = boardSpaceFilter[0];
+            }
 
             try {
                 const response = await fetch('/api/tasks/parse', {
@@ -487,6 +618,54 @@ function initBoardInlineAdd() {
     });
 }
 
+// Auto-select doing: send the user's intent to the AI, which picks the
+// matching TODO tasks and moves them to the Doing column. A space-filtered
+// board restricts the candidates to the selected spaces.
+async function autoSelectDoing() {
+    const input = document.getElementById('autoDoingInput');
+    const text = input.value.trim();
+    if (!text) {
+        input.focus();
+        return;
+    }
+
+    const btn = document.getElementById('autoDoingSubmitBtn');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<span class="loading"></span> Selecting…';
+    btn.disabled = true;
+    input.disabled = true;
+
+    const body = { text };
+    if (boardSpaceFilter !== null) body.space_ids = boardSpaceFilter;
+
+    try {
+        const response = await fetch('/api/tasks/auto-doing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (response.ok) {
+            const result = await response.json();
+            hideModalSafely(autoDoingModal, 'autoDoingModal');
+            const n = result.moved.length;
+            if (n > 0) {
+                await loadTasks();
+                calendar.refetchEvents();
+                showAlert(`✨ Moved ${n} task${n > 1 ? 's' : ''} to Doing`, 'success');
+            } else {
+                showAlert('No matching to-do tasks found', 'info');
+            }
+        } else {
+            const err = await response.json().catch(() => ({}));
+            showAlert(err.error || 'Error selecting tasks', 'danger');
+        }
+    } finally {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+        input.disabled = false;
+    }
+}
+
 function renderSpaceChips() {
     const container = document.getElementById('spaceChips');
     if (!container) return;
@@ -498,13 +677,27 @@ function renderSpaceChips() {
 
     container.innerHTML =
         chip('All spaces', null, boardSpaceFilter === null) +
-        spaces.map(s => chip(escapeHtml(s.name), s.id, boardSpaceFilter === s.id)).join('');
+        spaces.map(s => chip(escapeHtml(s.name), s.id,
+            boardSpaceFilter !== null && boardSpaceFilter.includes(s.id))).join('');
 
+    // Plain click = show only that space; Ctrl+click = toggle the space in/out
+    // of the current multi-space selection (empty set falls back to all).
     container.querySelectorAll('.space-chip').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
             const v = btn.dataset.spaceId;
-            boardSpaceFilter = v === 'all' ? null : parseInt(v);
-            localStorage.setItem('boardSpaceFilter', v);
+            if (v === 'all') {
+                boardSpaceFilter = null;
+            } else {
+                const id = parseInt(v);
+                if (e.ctrlKey || e.metaKey) {
+                    const set = new Set(boardSpaceFilter || []);
+                    set.has(id) ? set.delete(id) : set.add(id);
+                    boardSpaceFilter = set.size ? Array.from(set) : null;
+                } else {
+                    boardSpaceFilter = [id];
+                }
+            }
+            storeSpaceFilter();
             renderTasksView();
         });
     });
@@ -512,7 +705,7 @@ function renderSpaceChips() {
 
 function boardFilteredTasks() {
     if (boardSpaceFilter === null) return tasks;
-    return tasks.filter(t => t.space_id === boardSpaceFilter);
+    return tasks.filter(t => boardSpaceFilter.includes(t.space_id));
 }
 
 function renderBoard() {
@@ -563,7 +756,7 @@ function renderBoardCard(task) {
              data-task-id="${task.id}">
             <div class="board-card-top">
                 <div class="board-card-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title)}</div>
-                <div class="board-card-priority ${priorityClass}">${task.priority}</div>
+                <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
             </div>
             <div class="board-card-meta">
                 ${task.space ? `<span class="task-space">${escapeHtml(task.space)}</span>` : ''}
@@ -585,7 +778,7 @@ function openPriorityEditor(cardEl, taskId) {
     const badge = cardEl.querySelector('.board-card-priority');
     if (!badge || badge.querySelector('input')) return; // already editing
 
-    const original = task.priority;
+    const original = displayPriority(task.priority);
     const input = document.createElement('input');
     input.type = 'number';
     input.min = '0';
@@ -779,7 +972,7 @@ function renderTasks() {
         taskDiv.dataset.taskId = task.id;
 
         taskDiv.innerHTML = `
-            <div class="task-priority ${priorityClass}">${task.priority}</div>
+            <div class="task-priority ${priorityClass}">${displayPriority(task.priority)}</div>
             <div class="task-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title)}</div>
             <div class="task-meta">
                 ${task.space ? `<span class="task-space"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(task.space)}</span>` : ''}
@@ -1027,20 +1220,12 @@ async function updateTaskSchedule(taskId, start, end, freeze = false) {
     calendar.refetchEvents();
 }
 
-// Handle task reorder
+// Handle task reorder in the calendar sidebar list: same single-task
+// priority nudge as the board (only the dragged task changes).
 async function handleTaskReorder(evt) {
-    const taskIds = Array.from(document.querySelectorAll('#taskList .task-item')).map(item =>
-        parseInt(item.dataset.taskId)
-    );
-
-    await fetch('/api/tasks/reorder', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ task_ids: taskIds })
-    });
-    await loadTasks();
+    if (evt.newIndex === evt.oldIndex) return;
+    const draggedId = parseInt(evt.item.dataset.taskId);
+    await reorderDraggedTask(document.getElementById('taskList'), '.task-item', draggedId);
 }
 
 // ===== Task editing =====
@@ -1055,7 +1240,7 @@ function editTask(taskId) {
     document.getElementById('editDescription').value = task.description || '';
     document.getElementById('editSpace').value = task.space_id != null ? String(task.space_id) : '';
     document.getElementById('editStatus').value = task.status || 'todo';
-    document.getElementById('editPriority').value = task.priority;
+    document.getElementById('editPriority').value = displayPriority(task.priority);
     document.getElementById('editDuration').value = task.estimated_duration || 60;
 
     if (task.deadline) {
@@ -1090,7 +1275,7 @@ async function saveTask() {
         body: JSON.stringify(data)
     });
 
-    taskModal.hide();
+    hideModalSafely(taskModal, 'taskModal');
     await loadTasks();
     calendar.refetchEvents();
     showAlert('Task updated successfully!', 'success');
@@ -1281,6 +1466,24 @@ async function logout() {
 
 // ===== Utility functions =====
 
+// Bootstrap 5 silently ignores hide() while the show transition is still
+// running (its internal flag clears ~150ms AFTER the modal looks fully
+// visible), so a save fired fast enough — Ctrl+Enter right as the modal
+// opens — would leave the modal stuck open. Track "fully shown" through
+// Bootstrap's own events (they bubble to document) and defer the hide until
+// the show transition has finished.
+document.addEventListener('shown.bs.modal', (e) => { e.target.dataset.fullyShown = '1'; });
+document.addEventListener('hidden.bs.modal', (e) => { delete e.target.dataset.fullyShown; });
+
+function hideModalSafely(modal, modalElementId) {
+    const el = document.getElementById(modalElementId);
+    if (el.dataset.fullyShown) {
+        modal.hide();
+    } else if (el.classList.contains('show')) {
+        el.addEventListener('shown.bs.modal', () => modal.hide(), { once: true });
+    }
+}
+
 function showAlert(message, type) {
     // Create alert element
     const alert = document.createElement('div');
@@ -1303,6 +1506,12 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Priorities are stored as floats (drag-reorder nudges create fractional
+// values) but the 0-10 scale shown to the user stays integer.
+function displayPriority(priority) {
+    return Math.round(priority);
 }
 
 function formatDeadline(date) {
@@ -1637,7 +1846,7 @@ function renderSpaceTasks(spaceTasks) {
                     </div>
                 </div>
                 <div class="space-task-priority ${priorityClass}">
-                    ${task.priority}
+                    ${displayPriority(task.priority)}
                 </div>
             </div>
         `;
@@ -1699,7 +1908,7 @@ async function createTaskFromModal() {
         window.selectedSpaceForNewTask = null;
 
         // Close the modal
-        addTaskModal.hide();
+        hideModalSafely(addTaskModal, 'addTaskModal');
     } else {
         const error = await response.json();
         showAlert(error.error || 'Error creating task', 'danger');

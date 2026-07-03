@@ -68,7 +68,7 @@ simpler-smart-calendar/
 │   ├── mail_integration.py    # live IMAP fetch (transient DTOs)
 │   ├── crypto_utils.py        # Fernet encrypt/decrypt derived from SECRET_KEY
 │   ├── config.py              # env + prompt loading (cached at startup)
-│   ├── prompts/               # AI system prompts (task_creation, notes_cleanify, email_to_task)
+│   ├── prompts/               # AI system prompts (task_creation, notes_cleanify, email_to_task, task_selection)
 │   ├── prompts/
 │   │   ├── notes_cleanify.md  # Cleanify system prompt
 │   │   └── email_to_task.md   # email-to-task system prompt
@@ -96,7 +96,7 @@ simpler-smart-calendar/
 | description | TEXT | NULLABLE | Detailed task description |
 | space | STRING(100) | NULLABLE | LEGACY — unused by code; data backfilled into space_id by migrate_db.py |
 | space_id | INTEGER | FOREIGN KEY | Canonical reference to spaces.id |
-| priority | INTEGER | DEFAULT 0 | Priority 0-10, higher = more urgent |
+| priority | FLOAT | DEFAULT 0 | Priority 0-10, higher = more urgent; UI edits use integers, drag-reorder stores fractional values (existing INTEGER-declared prod column keeps REALs via SQLite type affinity) |
 | deadline | DATETIME | NULLABLE | Task deadline (ISO format) |
 | estimated_duration | INTEGER | NULLABLE | Duration in minutes (default 60) |
 | scheduled_start / scheduled_end | DATETIME | NULLABLE | Set by the auto-scheduler |
@@ -172,7 +172,8 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 - `DELETE /api/tasks/<id>`
 - `POST /api/tasks/<id>/toggle-freeze`
 - `POST /api/tasks/freeze-day` — `{date: YYYY-MM-DD}` toggles freeze for all tasks scheduled that day
-- `POST /api/tasks/reorder` — `{task_ids: [...]}` rewrites priorities from list order
+- `POST /api/tasks/reorder` — `{task_id, priority}` nudges ONLY the dragged task's priority (fractional values allowed, clamped 0-10); manual drag-reorder never rewrites the rest of the list
+- `POST /api/tasks/auto-doing` — `{text, space_ids?}` AI-selects the TODO tasks matching the stated intent (candidates optionally restricted to `space_ids`) and moves them to `doing` (ChangeLog actor = 'ai'); → `{moved: [...]}`; 502 when the AI response is unavailable/unparseable
 
 ### Scheduling (`src/routes/schedule.py`)
 - `POST /api/schedule` — auto-schedules all incomplete, non-frozen tasks into 30-min slots around external events, frozen tasks, and per-space time constraints
@@ -182,7 +183,7 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 - `GET/POST /api/spaces`, `PUT/DELETE /api/spaces/<id>` — CRUD, audited; fields incl. `context_markdown` (AI guidance) and `time_constraints`
 
 ### Notes (`src/routes/notes.py`)
-- `GET /api/notes?space_id=` — DTOs ordered by updated_at desc
+- `GET /api/notes?space_id=` — DTOs ordered by updated_at desc; `space_id` may repeat (`?space_id=1&space_id=3`) to get the union of several spaces; absent = all
 - `POST /api/notes` — `{space_id (required), title?, content_markdown?}`
 - `GET/PUT/DELETE /api/notes/<id>`
 - `POST /api/notes/<id>/cleanify` — → `{content}`; does NOT persist (the editor applies it and the debounced PUT autosave persists). Degrades to the original content on AI failure
@@ -209,9 +210,9 @@ One page, one header:
 
 - **Header**: brand · nav tabs (Tasks/Notes/Mail/Calendar/Spaces, in `1/2/3/4/5` order) · global quick-capture input (AI task creation from anywhere) · action icons (auto-schedule, calendars, shortcuts help, logout).
 - **Destinations** are sections toggled client-side (no page reloads), deep-linkable via `#tasks / #notes / #mail / #calendar / #spaces`; the last destination is remembered (`localStorage`).
-- **Tasks**: kanban board (SortableJS across columns → `PUT {status}`; intra-column order is priority/deadline — dedicated ordinal deferred per PrePRD), space filter chips (persisted), per-column "+" inline create (Enter creates in that column/space; input stays open for rapid entry), Done column capped at 30 most recently finished (`completed_at` desc). Board ⇄ Overview toggle persisted; the Overview has a persisted "Show done" toggle listing finished tasks most-recently-finished first.
-- **Calendar**: preserved behavior — FullCalendar with drag = reschedule + auto-freeze (Ctrl skips freeze), resize = duration change, sidebar task list with drag-to-reorder.
-- **Notes** (`notes.js`, `NotesView` module, lazy init): EasyMDE source editor with the standard formatting toolbar (headings, lists, quote, code, link/image, preview, side-by-side — table and fullscreen deliberately omitted) plus the custom add-task/Cleanify/Undo actions, deferred persistence (no empty "Untitled" rows), debounced autosave, Cleanify + single-step Undo, promote-selection-to-task.
+- **Tasks**: kanban board (SortableJS: cross-column drag → `PUT {status}` only; same-column drag = manual reorder nudging just the dragged task's priority via `POST /api/tasks/reorder`; Done stays completion-time ordered, no intra-column sort there), space filter chips (persisted; click = one space, Ctrl+click = toggle several spaces into the filter), per-column "+" inline create (Enter creates in that column; `restrict_space` only sent when exactly one space is filtered), Doing column's magic button → "what do you want to do?" modal → `POST /api/tasks/auto-doing` moves the AI-matched to-dos into Doing, Done column capped at 30 most recently finished (`completed_at` desc). Board ⇄ Overview toggle persisted; the Overview has a persisted "Show done" toggle listing finished tasks most-recently-finished first.
+- **Calendar**: preserved behavior — FullCalendar with drag = reschedule + auto-freeze (Ctrl skips freeze), resize = duration change, sidebar task list with drag-to-reorder (same single-task priority nudge as the board).
+- **Notes** (`notes.js`, `NotesView` module, lazy init): space chips like the board (click = one space, Ctrl+click = multi-space view; rows show a space tag when several spaces are visible; new notes land in the first selected space), EasyMDE source editor with the standard formatting toolbar (headings, lists, quote, code, link/image, preview, side-by-side — table and fullscreen deliberately omitted) plus the custom add-task/Cleanify/Undo actions, deferred persistence (no empty "Untitled" rows), debounced autosave (Ctrl+Enter flushes it immediately), Cleanify + single-step Undo, promote-selection-to-task.
 - **Spaces** (`spaces.js`, `SpacesView` module, lazy init): space list + editor — name, description, **AI context markdown** (guidance injected into every AI task prompt), and per-weekday time windows. Replaces the old header-button modal.
 - **Mail** (`mail.js`, `MailView` module, lazy init): mailbox sidebar + add/edit modal, live inbox list, click a message → reader modal (full plain-text body, still read-only server-side), right-click (or Task button) → AI draft → shared confirm modal.
 - **`task_draft_modal.js`**: the shared "confirm this AI task draft" modal used by both promote-to-task and email-to-task (drafts are never silently persisted).
@@ -222,12 +223,14 @@ One page, one header:
 |---|---|
 | `1` / `2` / `3` / `4` / `5` | Switch to Tasks / Notes / Mail / Calendar / Spaces |
 | `/` | Focus the quick-capture input |
-| `Ctrl+Enter` | Create task with AI (in any capture input) |
+| `Ctrl+Enter` | Save from wherever you're typing (open modal's primary action, notes autosave flush, space editor save; capture inputs create the task) |
 | `S` | Auto-schedule all |
 | `?` | Shortcuts help |
 | Click / `Ctrl`+Click / `Shift`+Click on any task | Edit / toggle done / toggle freeze (same convention on the board, the list, the overview, and calendar events) |
 | `Ctrl`+Click a calendar day header | Freeze/unfreeze the whole day |
-| Drag a board card | Change its status |
+| Drag a board card to another column | Change its status |
+| Drag a board card within its column | Reorder it (nudges only that task's priority) |
+| `Ctrl`+Click a space chip (board/Notes) | Add/remove the space to the filter (multi-space view) |
 | Drag/resize a calendar event | Reschedule (+freeze; hold `Ctrl` to skip freeze) |
 
 ## AI Integration
@@ -239,6 +242,7 @@ Provider abstraction in `ai_parser.py`: `OpenAIProvider` (any OpenAI-compatible 
 | `parse_task_with_ai` | `src/prompts/task_creation.md` (+ spaces context) | JSON → task dicts, relative deadlines normalized | trivial title/description draft |
 | `cleanify_note_with_ai` | `src/prompts/notes_cleanify.md` (+ note's Space context) | raw text | original note returned unchanged |
 | `email_to_task_with_ai` | `src/prompts/email_to_task.md` (+ spaces context) | reuses `parse_task` seam | subject/body-derived draft |
+| `select_tasks_with_ai` | `src/prompts/task_selection.md` | reuses `cleanify` seam (raw completion); JSON id array normalized to candidate subset | returns `None` → route responds 502 |
 
 There is deliberately **no** `AIProvider.complete()` generalization — `cleanify` is a sibling method and email-to-task reuses `parse_task` (see `.opencode/context/topics/ai-parsing.md`).
 

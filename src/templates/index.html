@@ -91,6 +91,9 @@
                     <div class="board-col-header">
                         <span class="board-col-title"><i class="fas fa-play"></i> Doing</span>
                         <span class="board-col-count" id="count-doing"></span>
+                        <button class="board-col-add" id="autoDoingBtn" title="AI: tell it what you want to do, it moves the matching to-dos here">
+                            <i class="fas fa-magic"></i>
+                        </button>
                         <button class="board-col-add" data-status="doing" title="Focus this column's quick-add (Enter to save)">
                             <i class="fas fa-plus"></i>
                         </button>
@@ -215,8 +218,9 @@
             <div class="notes-layout">
                 <aside class="notes-list-panel">
                     <div class="d-flex gap-2 align-items-center mb-2">
-                        <select id="spaceSwitcher" class="form-select form-select-sm" style="width:auto;"></select>
-                        <button class="btn btn-sm btn-success" id="newNoteBtn" title="New note (N)">
+                        <!-- Same chips as the kanban board: click = one space, Ctrl+click = add/remove spaces -->
+                        <div class="space-chips flex-grow-1" id="notesSpaceChips"></div>
+                        <button class="btn btn-sm btn-success" id="newNoteBtn" title="New note">
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
@@ -524,6 +528,31 @@
         </div>
     </div>
 
+    <!-- Auto-select Doing Modal (AI picks matching to-dos, moves them to Doing) -->
+    <div class="modal fade" id="autoDoingModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-magic"></i> What do you want to do?</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" class="form-control" id="autoDoingInput"
+                           placeholder="e.g. work on the website, quick errands, something for uni…">
+                    <div class="form-text mt-2">
+                        AI picks the matching to-do tasks and moves them to Doing. Enter to go.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="autoDoingSubmitBtn">
+                        <i class="fas fa-magic"></i> Move to Doing
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Keyboard Shortcuts Help Modal -->
     <div class="modal fade" id="helpModal" tabindex="-1">
         <div class="modal-dialog">
@@ -539,7 +568,7 @@
                             <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> / <kbd>5</kbd></td><td>Switch to Tasks / Notes / Mail / Calendar / Spaces</td></tr>
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
                             <tr><td><kbd>Enter</kbd></td><td>Create task with AI (header or board quick-add input)</td></tr>
-                            <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Create task from the add-task modal textarea</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Save from wherever you're typing (any modal, notes, space editor…)</td></tr>
                             <tr><td><kbd>S</kbd></td><td>Auto-schedule all tasks</td></tr>
                             <tr><td><kbd>?</kbd></td><td>This help</td></tr>
                             <tr><td><kbd>Esc</kbd></td><td>Close modal / cancel inline add / leave input</td></tr>
@@ -558,6 +587,9 @@
                             <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> (board, with selection)</td><td>Copy selected tasks as <code>- **Title**: description</code> markdown</td></tr>
                             <tr><td><kbd>Esc</kbd> / empty click / view switch</td><td>Clear the multi-selection (also clears after each action)</td></tr>
                             <tr><td><kbd>Enter</kbd> in a column's + input</td><td>Create task in that column</td></tr>
+                            <tr><td>Drag a card within its column</td><td>Reorder it (nudges only that task's priority)</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>Click</kbd> a space chip</td><td>Add/remove the space to the filter (view several spaces at once; also in Notes)</td></tr>
+                            <tr><td><i class="fas fa-magic"></i> in the Doing column</td><td>Tell the AI what you want to do — it moves the matching to-dos to Doing</td></tr>
                         </tbody>
                     </table>
                     <h6 class="text-muted">Calendar</h6>

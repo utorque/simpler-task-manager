@@ -10,6 +10,19 @@ from typing import List, Dict, Any, Optional
 import requests
 
 
+def _strip_code_fences(response_text: str) -> str:
+    """Strip a leading markdown code fence from a model response, if any."""
+    if '```json' in response_text:
+        json_start = response_text.find('```json') + 7
+        json_end = response_text.find('```', json_start)
+        return response_text[json_start:json_end].strip()
+    if '```' in response_text:
+        json_start = response_text.find('```') + 3
+        json_end = response_text.find('```', json_start)
+        return response_text[json_start:json_end].strip()
+    return response_text
+
+
 class AIProvider:
     """Base class for AI providers"""
     
@@ -33,17 +46,9 @@ class AIProvider:
 
     def _process_response(self, response_text: str) -> List[Dict[str, Any]]:
         """Process raw response text to extract task data"""
-        # Try to extract JSON from the response
         # Sometimes models might include markdown code blocks
-        if '```json' in response_text:
-            json_start = response_text.find('```json') + 7
-            json_end = response_text.find('```', json_start)
-            response_text = response_text[json_start:json_end].strip()
-        elif '```' in response_text:
-            json_start = response_text.find('```') + 3
-            json_end = response_text.find('```', json_start)
-            response_text = response_text[json_start:json_end].strip()
-        
+        response_text = _strip_code_fences(response_text)
+
         result = json.loads(response_text)
         
         # Handle both single task and multiple tasks
@@ -307,6 +312,56 @@ def email_to_task_with_ai(subject: str, body: str, system_prompt: str) -> List[D
         'deadline': None,
         'estimated_duration': 60,
     }]
+
+
+def select_tasks_with_ai(intent_text: str, candidate_tasks: List[Dict[str, Any]],
+                         system_prompt: str) -> Optional[List[int]]:
+    """
+    Ask the AI which of the candidate tasks match the user's stated intent
+    (the kanban "what do you want to do?" auto-select-doing feature).
+
+    Reuses the provider `cleanify` seam — raw (system prompt + user text →
+    model text) completion — the same deliberate no-new-AI-code-path choice
+    email_to_task made for `parse_task`. The response is expected to be a
+    JSON array of task ids.
+
+    Returns the selected ids (possibly empty, always a subset of the
+    candidates, order and duplicates normalized), or None when the AI response
+    is unavailable or unparseable — so the caller can surface an error instead
+    of silently matching nothing.
+    """
+    lines = []
+    for t in candidate_tasks:
+        desc = (t.get('description') or '').strip().replace('\n', ' ')
+        line = (
+            f"- id={t['id']} | title={t['title']} | space={t.get('space') or '-'}"
+            f" | priority={t.get('priority')} | deadline={t.get('deadline') or '-'}"
+            f" | duration={t.get('estimated_duration') or '-'}min"
+        )
+        if desc:
+            line += f" | description={desc[:200]}"
+        lines.append(line)
+
+    user_message = (
+        f"The user wants to work on: {intent_text}\n\n"
+        "Candidate TODO tasks:\n" + "\n".join(lines)
+    )
+
+    try:
+        response_text = get_ai_provider().cleanify(user_message, system_prompt)
+        result = json.loads(_strip_code_fences(response_text))
+        if not isinstance(result, list):
+            return None
+        valid_ids = {t['id'] for t in candidate_tasks}
+        selected = []
+        for item in result:
+            if isinstance(item, dict):  # tolerate [{"id": 3}, ...] shape
+                item = item.get('id')
+            if isinstance(item, int) and item in valid_ids and item not in selected:
+                selected.append(item)
+        return selected
+    except Exception:
+        return None
 
 
 def cleanify_note_with_ai(note_text: str, system_prompt: str) -> str:

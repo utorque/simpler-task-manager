@@ -19,7 +19,12 @@ class Task(db.Model):
     # is additive-only; its data is backfilled into space_id by a data fixup.
     space = db.Column(db.String(100))
     space_id = db.Column(db.Integer, db.ForeignKey('spaces.id'))  # Reference to Space table
-    priority = db.Column(db.Integer, default=0)  # Higher number = higher priority
+    # Higher number = higher priority. Float: user-facing editing stays on the
+    # integer 0-10 scale, but manual drag-reorder nudges the dragged task to a
+    # fractional value between its new neighbours so ONLY that task changes.
+    # (SQLite type affinity keeps prod's INTEGER-declared column storing
+    # fractional REALs losslessly — no migration needed.)
+    priority = db.Column(db.Float, default=0)
     deadline = db.Column(db.DateTime)
     estimated_duration = db.Column(db.Integer)  # in minutes
     scheduled_start = db.Column(db.DateTime)
