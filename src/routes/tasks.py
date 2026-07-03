@@ -2,9 +2,9 @@
 
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
-from ai_parser import parse_task_with_ai
+from ai_parser import parse_task_with_ai, select_tasks_with_ai
 from audit import record_change
 from auth import login_required
 from datetime_utils import parse_iso_datetime
@@ -236,16 +236,74 @@ def freeze_day():
 @tasks_bp.route('/api/tasks/reorder', methods=['POST'])
 @login_required
 def reorder_tasks():
-    data = request.json
-    task_ids = data.get('task_ids', [])
+    """Manual drag-reorder: nudge ONE task's priority (the dragged card).
 
-    # Update priorities based on order (higher index = higher priority)
-    for index, task_id in enumerate(reversed(task_ids)):
-        task = db.session.get(Task, task_id)
-        if task:
-            old_value = task.to_dict()
-            task.priority = index
-            record_change('reorder', 'task', task.id, old=old_value, new=task.to_dict())
+    The client computes the priority that slots the dragged task between its
+    new neighbours (fractional values allowed) and sends only that task —
+    reordering never rewrites the rest of the list.
+    """
+    data = request.json or {}
+    task_id = data.get('task_id')
+    priority = data.get('priority')
+
+    if task_id is None or priority is None:
+        return jsonify({'error': 'task_id and priority are required'}), 400
+    try:
+        priority = float(priority)
+    except (TypeError, ValueError):
+        return jsonify({'error': f"invalid priority {data['priority']!r}, expected a number"}), 400
+
+    task = db.session.get(Task, task_id)
+    if task is None:
+        return jsonify({'error': f'task {task_id} not found'}), 404
+
+    old_value = task.to_dict()
+    task.priority = max(0.0, min(10.0, priority))
+    record_change('reorder', 'task', task.id, old=old_value, new=task.to_dict())
+    db.session.commit()
+
+    return jsonify(task.to_dict())
+
+
+@tasks_bp.route('/api/tasks/auto-doing', methods=['POST'])
+@login_required
+def auto_select_doing():
+    """AI auto-select for the Doing column: given a free-text intent ("what do
+    you want to do?"), pick the matching TODO tasks and move them to doing.
+
+    `space_ids` (optional) restricts the candidates to those spaces so a
+    space-filtered board never pulls in tasks it isn't showing.
+    """
+    data = request.json or {}
+    text = (data.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'No text provided'}), 400
+    space_ids = data.get('space_ids')
+
+    query = Task.query.filter_by(status='todo')
+    if space_ids:
+        query = query.filter(Task.space_id.in_(space_ids))
+    candidates = query.all()
+
+    if not candidates:
+        return jsonify({'moved': []})
+
+    selected_ids = select_tasks_with_ai(
+        text,
+        [task.to_dict() for task in candidates],
+        current_app.config['TASK_SELECTION_PROMPT'],
+    )
+    if selected_ids is None:
+        return jsonify({'error': 'AI could not select tasks — try again or drag them manually'}), 502
+
+    by_id = {task.id: task for task in candidates}
+    moved = []
+    for task_id in selected_ids:
+        task = by_id[task_id]  # select_tasks_with_ai guarantees candidate ids
+        old_value = task.to_dict()
+        task.apply_status('doing')
+        record_change('update', 'task', task.id, old=old_value, new=task.to_dict(), actor='ai')
+        moved.append(task)
 
     db.session.commit()
-    return jsonify({'success': True})
+    return jsonify({'moved': [task.to_dict() for task in moved]})

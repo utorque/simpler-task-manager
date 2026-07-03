@@ -1316,6 +1316,19 @@ body {
 .note-row:hover { background: #f8f9fa; }
 .note-row.active { background: #e7f1ff; }
 .note-row-title { font-weight: 600; color: #212529; }
+
+/* Space tag on note rows, shown when viewing several spaces at once */
+.note-row-space {
+    display: inline-block;
+    background: #edf2f7;
+    color: #4a5568;
+    padding: 1px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-left: 6px;
+    vertical-align: middle;
+}
 .note-row-preview {
     font-size: 0.85rem;
     color: #6c757d;

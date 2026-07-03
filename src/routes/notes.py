@@ -14,10 +14,12 @@ notes_bp = Blueprint('notes', __name__)
 @notes_bp.route('/api/notes', methods=['GET'])
 @login_required
 def get_notes():
-    space_id = request.args.get('space_id', type=int)
+    # `space_id` may be repeated (?space_id=1&space_id=3) to view several
+    # spaces at once (Ctrl+click multi-select chips); absent = all spaces.
+    space_ids = request.args.getlist('space_id', type=int)
     query = Note.query
-    if space_id is not None:
-        query = query.filter_by(space_id=space_id)
+    if space_ids:
+        query = query.filter(Note.space_id.in_(space_ids))
     notes = query.order_by(Note.updated_at.desc()).all()
     return jsonify([note.to_dict() for note in notes])
 
