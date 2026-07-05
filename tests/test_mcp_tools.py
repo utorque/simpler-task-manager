@@ -90,7 +90,6 @@ def test_get_calendar_windows_scheduled_tasks(mcp_client, app):
     task = mcp_srv.create_task(title='slotted')
     soon = datetime.now() + timedelta(hours=2)
     far = datetime.now() + timedelta(days=30)
-    mcp_srv.update_task(task['id'], deadline=None)
     with app.app_context():
         row = db.session.get(Task, task['id'])
         row.scheduled_start = soon
