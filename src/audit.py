@@ -21,16 +21,23 @@ For creates, flush first so the entity has an id:
 
 import json
 
+from flask import g, has_app_context
+
 from models import db, ChangeLog
 
 
-def record_change(action, entity_type, entity_id, old=None, new=None, actor='user'):
+def record_change(action, entity_type, entity_id, old=None, new=None, actor=None):
     """Queue a ChangeLog row in the current session; the caller commits.
 
     `old` / `new` are plain dicts (usually `entity.to_dict()`), serialized
     here. `actor` records who drove the mutation: 'user' for direct UI/API
-    edits, 'ai' for AI-created entities (parse, email-to-task).
+    edits, 'ai' for AI-created entities (parse, email-to-task), 'agent' for
+    bearer-token mutations (Hermes via the MCP sidecar). When the caller does
+    not pass one, the auth layer's `g.actor` wins (set on bearer auth),
+    falling back to 'user'.
     """
+    if actor is None:
+        actor = (g.get('actor') if has_app_context() else None) or 'user'
     db.session.add(ChangeLog(
         action=action,
         entity_type=entity_type,

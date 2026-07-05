@@ -97,11 +97,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Load initial data
     await Promise.all([loadTasks(), loadSpaces()]);
 
-    // Destination: deep link (#tasks/#notes/#mail/#calendar/#spaces) > last used > Tasks
+    // Destination: deep link (#tasks/#notes/#mail/#calendar/#spaces/#hermes) > last used > Tasks.
+    // Hermes only exists when HERMES_WEBUI_URL is configured (tab + view are
+    // server-side conditional) — an unavailable remembered/hashed destination
+    // falls back to Tasks.
+    const destinations = ['tasks', 'notes', 'mail', 'calendar', 'spaces'];
+    if (document.getElementById('view-hermes')) destinations.push('hermes');
     const fromHash = window.location.hash.replace('#', '');
-    const initial = ['tasks', 'notes', 'mail', 'calendar', 'spaces'].includes(fromHash)
+    let initial = destinations.includes(fromHash)
         ? fromHash
         : (localStorage.getItem('destination') || 'tasks');
+    if (!destinations.includes(initial)) initial = 'tasks';
     switchDestination(initial);
     switchTasksSubview(tasksSubview);
 
@@ -217,6 +223,11 @@ function switchDestination(destination) {
     if (destination === 'spaces' && window.SpacesView) {
         window.SpacesView.enter();
     }
+    if (destination === 'hermes') {
+        // Lazy-load the embedded hermes-webui on first visit only.
+        const frame = document.getElementById('hermesFrame');
+        if (frame && !frame.src) frame.src = frame.dataset.src;
+    }
 }
 
 // Board <-> Overview toggle inside the Tasks destination (persisted)
@@ -288,6 +299,9 @@ function initKeyboardShortcuts() {
             case '3': switchDestination('mail'); break;
             case '4': switchDestination('calendar'); break;
             case '5': switchDestination('spaces'); break;
+            case '6':
+                if (document.getElementById('view-hermes')) switchDestination('hermes');
+                break;
             case '/':
                 e.preventDefault();
                 document.getElementById('quickCapture').focus();

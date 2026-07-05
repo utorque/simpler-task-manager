@@ -9,7 +9,10 @@ pages_bp = Blueprint('pages', __name__)
 def index():
     if not session.get('authenticated'):
         return redirect(url_for('pages.login'))
-    return render_template('index.html')
+    return render_template(
+        'index.html',
+        hermes_webui_url=current_app.config.get('HERMES_WEBUI_URL'),
+    )
 
 
 @pages_bp.route('/notes')

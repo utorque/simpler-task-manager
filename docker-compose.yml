@@ -9,3 +9,21 @@ services:
     volumes:
       - ./instance:/app/instance
       - ./src:/app/src
+
+  # simpler-mcp: MCP sidecar exposing the app's domain as agent tools
+  # (PRD 002 pillar A). Wraps the REST API with the API_TOKEN bearer
+  # credential; serves streamable HTTP at /mcp. Published on loopback only —
+  # enough for a Hermes agent on the same host. If Hermes runs elsewhere,
+  # front it with a TLS reverse proxy instead of widening the bind.
+  mcp:
+    build:
+      context: .
+      dockerfile: mcp_server/Dockerfile
+    environment:
+      SIMPLER_BASE_URL: http://web:53000
+      SIMPLER_API_TOKEN: ${API_TOKEN:-}
+    ports:
+      - "127.0.0.1:8765:8765"
+    depends_on:
+      - web
+    restart: unless-stopped
