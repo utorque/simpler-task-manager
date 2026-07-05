@@ -9,7 +9,14 @@ pages_bp = Blueprint('pages', __name__)
 def index():
     if not session.get('authenticated'):
         return redirect(url_for('pages.login'))
-    return render_template('index.html')
+    # Hermes iframe src: same-origin proxy (/hermes-ui/, no reverse-proxy
+    # changes needed) when the compose-internal URL is set; else a directly
+    # reachable external webui URL; else no Hermes tab at all.
+    if current_app.config.get('HERMES_WEBUI_INTERNAL_URL'):
+        hermes_src = '/hermes-ui/'
+    else:
+        hermes_src = current_app.config.get('HERMES_WEBUI_URL')
+    return render_template('index.html', hermes_webui_url=hermes_src)
 
 
 @pages_bp.route('/notes')

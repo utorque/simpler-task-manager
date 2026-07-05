@@ -81,6 +81,17 @@ class Config:
     AI_API_BASE_URL = os.getenv('AI_API_BASE_URL', 'https://api.openai.com/v1/')
     AI_MODEL = os.getenv('AI_MODEL', 'gpt-3.5-turbo')
     APP_PASSWORD = os.getenv('APP_PASSWORD', 'admin')
+    # Machine-client bearer token (MCP sidecar / Hermes agent). Unset = the
+    # bearer auth path is off and only the session cookie authenticates.
+    API_TOKEN = os.getenv('API_TOKEN')
+    # hermes-webui URL for the embedded Hermes destination (6th shell page).
+    # Unset = the Hermes tab is hidden entirely.
+    HERMES_WEBUI_URL = os.getenv('HERMES_WEBUI_URL')
+    # Compose-internal hermes-webui URL. When set, the app reverse-proxies it
+    # same-origin at /hermes-ui/ (routes/hermes_proxy.py) and the Hermes tab
+    # embeds THAT — no sibling DNS name or nginx changes needed. Takes
+    # precedence over HERMES_WEBUI_URL for the iframe src.
+    HERMES_WEBUI_INTERNAL_URL = os.getenv('HERMES_WEBUI_INTERNAL_URL')
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
     SYSTEM_PROMPT = load_system_prompt()
     NOTES_CLEANIFY_PROMPT = load_notes_cleanify_prompt()

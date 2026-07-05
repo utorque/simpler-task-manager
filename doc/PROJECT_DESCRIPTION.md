@@ -15,6 +15,8 @@ One page, one header, four destinations:
 
 A **global quick-capture input in the header** turns pasted text (emails, thoughts, meeting notes) into structured tasks via an LLM from anywhere in the app.
 
+Optionally (PRD 002), a **Hermes destination** (6th tab, shortcut `6`) embeds a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) chat with a [Hermes Agent](https://github.com/NousResearch/hermes-agent) in an iframe (`HERMES_WEBUI_URL`; tab hidden when unset), and the `mcp_server/` sidecar exposes the whole domain to that agent as MCP tools.
+
 **Primary Use**: Self-hosted personal task management
 **Target Users**: Individuals with ADHD who need simple, fast organization with minimal context switching
 
@@ -24,7 +26,7 @@ A **global quick-capture input in the header** turns pasted text (emails, though
 - **Framework**: Flask 3 (app factory + per-domain blueprints)
 - **Database**: SQLite with Flask-SQLAlchemy
 - **AI**: any OpenAI-compatible endpoint (OpenAI, Mistral, Infomaniak, …) or the Anthropic API — selected at runtime from `AI_API_BASE_URL`
-- **Auth**: single shared `APP_PASSWORD`, session cookie
+- **Auth**: single shared `APP_PASSWORD`, session cookie; optional `API_TOKEN` bearer header for machine clients (the MCP sidecar)
 - **Calendar**: `icalendar` for ICS parsing (live fetch, no sync daemon)
 - **Mail**: stdlib `imaplib` + `email` (live fetch, nothing persisted)
 - **Secrets at rest**: `cryptography` (Fernet) for mailbox passwords
@@ -46,6 +48,9 @@ simpler-smart-calendar/
 ├── migrate_db.py              # Additive schema reconciler + idempotent data fixups (prod SQLite)
 ├── requirements.txt
 ├── Dockerfile / docker-compose.yml
+├── mcp_server/                # simpler-mcp sidecar: FastMCP tools wrapping the REST API (PRD 002)
+│   ├── server.py              # ~26 typed agent tools (tasks/spaces/notes/mail-read/schedule/changelog)
+│   ├── Dockerfile / requirements.txt / README.md
 ├── src/
 │   ├── app.py                 # App factory only; registers blueprints
 │   ├── models.py              # Task, Space, ChangeLog, Note, Mailbox, CalendarSource
@@ -56,7 +61,8 @@ simpler-smart-calendar/
 │   │   ├── notes.py           # /api/notes* (CRUD, cleanify, promote-to-task)
 │   │   ├── mailboxes.py       # /api/mailboxes* (CRUD, messages, add-task)
 │   │   ├── calendar_sources.py# /api/calendar-sources*, /api/external-events
-│   │   └── schedule.py        # /api/schedule, /api/logs
+│   │   ├── schedule.py        # /api/schedule, /api/logs
+│   │   └── hermes_proxy.py    # /hermes-ui/* same-origin streaming proxy → hermes-webui container
 │   ├── auth.py                # login_required decorator
 │   ├── audit.py               # record_change() — single-transaction ChangeLog seam
 │   ├── datetime_utils.py      # parse_iso_datetime
@@ -171,7 +177,7 @@ No inbox contents are persisted — messages are fetched live per request. `to_d
 
 ## API Endpoints
 
-All `/api/*` routes require the session cookie (`@login_required`, JSON 401 otherwise).
+All `/api/*` routes require the session cookie (`@login_required`, JSON 401 otherwise) — or, when the optional `API_TOKEN` env var is set, an `Authorization: Bearer <API_TOKEN>` header (constant-time compare; used by the `mcp_server/` sidecar). Bearer-authenticated mutations are audited with ChangeLog `actor='agent'` (via `g.actor`; routes passing an explicit actor — the AI parse paths' `'ai'` — keep it).
 
 ### Authentication
 - `POST /login` — `{password}` → sets session
@@ -238,6 +244,7 @@ One page, one header:
 | Shortcut | Action |
 |---|---|
 | `1` / `2` / `3` / `4` / `5` | Switch to Tasks / Notes / Mail / Calendar / Spaces |
+| `6` | Switch to Hermes (agent chat; only when `HERMES_WEBUI_URL` is configured) |
 | `/` | Focus the quick-capture input |
 | `Ctrl+Enter` | Save from wherever you're typing (open modal's primary action, notes autosave flush, space editor save; capture inputs create the task) |
 | `S` | Auto-schedule all |
@@ -275,6 +282,9 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 | AI_API_BASE_URL | No | `https://api.openai.com/v1/` | Any OpenAI-compatible endpoint, or `api.anthropic.com` |
 | AI_MODEL | No | `gpt-3.5-turbo` | Model name |
 | APP_PASSWORD | Yes | "admin" | Single shared password |
+| API_TOKEN | No | None | Bearer token for machine clients (MCP sidecar); unset = bearer auth off |
+| HERMES_WEBUI_INTERNAL_URL | No | None | Compose-internal hermes-webui URL; when set the app proxies it same-origin at `/hermes-ui/` (login-gated, X-Frame-Options stripped) and the Hermes tab embeds that. Set by docker-compose |
+| HERMES_WEBUI_URL | No | None | Alternative: directly reachable webui URL to iframe (sibling subdomain + frame-ancestors); ignored when the internal URL is set. Both unset = tab hidden |
 | SECRET_KEY | Yes | dev fallback | Flask session secret **and** the key mailbox passwords are encrypted with — rotating it forces re-entering mailbox passwords |
 | FLASK_ENV | No | development | |
 
@@ -294,7 +304,7 @@ Run it after pulling code that changes `models.py`, before `docker compose up`.
 
 ## Testing
 
-`pytest` (122 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
+`pytest` (159 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB. The MCP sidecar's tools are tested in-process (`tests/test_mcp_tools.py`): its httpx client is swapped for an `httpx.WSGITransport` pointed at the Flask test app, so every tool exercises the real routes through the bearer-token path (`tests/test_api_token_auth.py` covers the auth seam itself).
 
 ```bash
 python -m pytest -q
@@ -308,7 +318,15 @@ docker-compose up -d        # port 53000, ./instance holds tasks.db
 
 Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remember: it also encrypts mailbox passwords), use a WSGI server, HTTPS, and back up `instance/tasks.db`.
 
+**Hermes agent integration (optional, fully containerized)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `hermes-webui` (chat UI + Hermes Agent, auto-installed into `./hermes-home` on first start, no host port). The app reverse-proxies the webui same-origin at `/hermes-ui/` behind the normal login and embeds it as the Hermes tab — no reverse-proxy/DNS changes needed. Set `API_TOKEN` (`openssl rand -hex 32`) and seed `./hermes-home/` — **step-by-step walkthrough: `doc/setup-hermes-integration.md`**. Full architecture, rollout phases, and security analysis (incl. mail prompt-injection guardrails): `.opencode/plans/002_PRD_hermes-agent-integration.md`.
+
 ## Version History
+
+**2026-07 — Hermes agent integration (PRD 002)**:
+- ✅ `API_TOKEN` bearer auth mode in `auth.py` (constant-time compare; off when unset) + `actor='agent'` ChangeLog attribution via `g.actor` default in `audit.record_change()`
+- ✅ `mcp_server/` FastMCP sidecar (streamable HTTP :8765) — ~26 typed tools wrapping the REST API (tasks/subtasks/spaces/notes/schedule/freeze/changelog/mail-read/email-to-task drafts), compose service `mcp`
+- ✅ Hermes destination: optional 6th tab (shortcut `6`, `#hermes`) embedding hermes-webui via lazy iframe; hidden when unconfigured; help modal updated
+- ✅ Fully containerized: `hermes-webui` compose service (chat UI + agent, auto-installed into `./hermes-home`, no host port) + `/hermes-ui/` same-origin login-gated streaming proxy (`routes/hermes_proxy.py`) so the embed needs zero reverse-proxy changes; setup walkthrough in `doc/setup-hermes-integration.md`
 
 **2026-07 — Unified workspace (PrePRD 000)**:
 - ✅ Backend modularized: app factory + per-domain blueprints, audited-write seam (ChangeLog actor), scheduler pure-over-data, space_id migration finished
@@ -326,5 +344,5 @@ Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remembe
 
 ---
 
-**Last Updated**: 2026-07-01
+**Last Updated**: 2026-07-05
 **Documentation Version**: 2.0
