@@ -66,6 +66,7 @@ services:
   # gate. Configure the agent (model API key, MCP servers) in
   # ./hermes-home/config.yaml — see doc/setup-hermes-integration.md.
   #
+  
   hermes-webui:
     build:
       # Pin to a tag/commit instead of master for reproducible rebuilds,
