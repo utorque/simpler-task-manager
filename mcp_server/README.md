@@ -14,7 +14,7 @@ It ships as a compose service (see the root `docker-compose.yml`):
 
 ```bash
 # in the repo root: set API_TOKEN in .env first (openssl rand -hex 32)
-docker compose up -d          # web (:53000) + mcp (:8765, loopback only)
+docker compose up -d          # web (:53000) + mcp + hermes-webui (both compose-network-only)
 ```
 
 Standalone (e.g. for development):
@@ -31,9 +31,13 @@ SIMPLER_BASE_URL=http://localhost:53000 SIMPLER_API_TOKEN=<token> \
 | `SIMPLER_API_TOKEN` | — | must equal the app's `API_TOKEN` |
 | `MCP_BIND` | `0.0.0.0:8765` | listen address (streamable HTTP at `/mcp`) |
 
-The compose file publishes the port on `127.0.0.1:8765` only — enough for a
-Hermes installed on the same host. If Hermes runs elsewhere, front the port
-with a TLS reverse proxy instead of exposing it directly.
+The compose file does NOT publish the port on the host: the containerized
+Hermes (`hermes-webui` service) reaches it at `http://mcp:8765/mcp` over the
+compose network. For a Hermes installed on the host instead, uncomment the
+`ports` lines in `docker-compose.yml` (loopback publish); for a remote
+Hermes, front the port with a TLS reverse proxy — never expose it bare
+(the MCP endpoint itself is unauthenticated; the network boundary is the
+auth). Full walkthrough: `doc/setup-hermes-integration.md`.
 
 ## Registering in Hermes
 
@@ -42,7 +46,7 @@ with a TLS reverse proxy instead of exposing it directly.
 ```yaml
 mcp_servers:
   simpler:
-    url: "http://127.0.0.1:8765/mcp"
+    url: "http://mcp:8765/mcp"  # containerized Hermes; host install: http://127.0.0.1:8765/mcp
     timeout: 60
     tools:
       resources: false

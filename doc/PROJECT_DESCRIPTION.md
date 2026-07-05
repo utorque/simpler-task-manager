@@ -61,7 +61,8 @@ simpler-smart-calendar/
 │   │   ├── notes.py           # /api/notes* (CRUD, cleanify, promote-to-task)
 │   │   ├── mailboxes.py       # /api/mailboxes* (CRUD, messages, add-task)
 │   │   ├── calendar_sources.py# /api/calendar-sources*, /api/external-events
-│   │   └── schedule.py        # /api/schedule, /api/logs
+│   │   ├── schedule.py        # /api/schedule, /api/logs
+│   │   └── hermes_proxy.py    # /hermes-ui/* same-origin streaming proxy → hermes-webui container
 │   ├── auth.py                # login_required decorator
 │   ├── audit.py               # record_change() — single-transaction ChangeLog seam
 │   ├── datetime_utils.py      # parse_iso_datetime
@@ -282,7 +283,8 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 | AI_MODEL | No | `gpt-3.5-turbo` | Model name |
 | APP_PASSWORD | Yes | "admin" | Single shared password |
 | API_TOKEN | No | None | Bearer token for machine clients (MCP sidecar); unset = bearer auth off |
-| HERMES_WEBUI_URL | No | None | URL of a deployed hermes-webui to embed as the Hermes destination; unset = tab hidden |
+| HERMES_WEBUI_INTERNAL_URL | No | None | Compose-internal hermes-webui URL; when set the app proxies it same-origin at `/hermes-ui/` (login-gated, X-Frame-Options stripped) and the Hermes tab embeds that. Set by docker-compose |
+| HERMES_WEBUI_URL | No | None | Alternative: directly reachable webui URL to iframe (sibling subdomain + frame-ancestors); ignored when the internal URL is set. Both unset = tab hidden |
 | SECRET_KEY | Yes | dev fallback | Flask session secret **and** the key mailbox passwords are encrypted with — rotating it forces re-entering mailbox passwords |
 | FLASK_ENV | No | development | |
 
@@ -302,7 +304,7 @@ Run it after pulling code that changes `models.py`, before `docker compose up`.
 
 ## Testing
 
-`pytest` (149 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB. The MCP sidecar's tools are tested in-process (`tests/test_mcp_tools.py`): its httpx client is swapped for an `httpx.WSGITransport` pointed at the Flask test app, so every tool exercises the real routes through the bearer-token path (`tests/test_api_token_auth.py` covers the auth seam itself).
+`pytest` (159 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB. The MCP sidecar's tools are tested in-process (`tests/test_mcp_tools.py`): its httpx client is swapped for an `httpx.WSGITransport` pointed at the Flask test app, so every tool exercises the real routes through the bearer-token path (`tests/test_api_token_auth.py` covers the auth seam itself).
 
 ```bash
 python -m pytest -q
@@ -316,14 +318,15 @@ docker-compose up -d        # port 53000, ./instance holds tasks.db
 
 Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remember: it also encrypts mailbox passwords), use a WSGI server, HTTPS, and back up `instance/tasks.db`.
 
-**Hermes agent integration (optional)**: the `mcp` compose service publishes the MCP sidecar on `127.0.0.1:8765` (streamable HTTP at `/mcp`) — set `API_TOKEN` (`openssl rand -hex 32`) or the sidecar's calls get 401s. Register it in the Hermes host's `~/.hermes/config.yaml` under `mcp_servers:` (see `mcp_server/README.md`). To embed the chat page, deploy hermes-webui on a sibling subdomain behind a reverse proxy that strips `X-Frame-Options` and sets `Content-Security-Policy: frame-ancestors <app origin>`, then set `HERMES_WEBUI_URL`. Full architecture, rollout phases, and security analysis (incl. mail prompt-injection guardrails): `.opencode/plans/002_PRD_hermes-agent-integration.md`.
+**Hermes agent integration (optional, fully containerized)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `hermes-webui` (chat UI + Hermes Agent, auto-installed into `./hermes-home` on first start, no host port). The app reverse-proxies the webui same-origin at `/hermes-ui/` behind the normal login and embeds it as the Hermes tab — no reverse-proxy/DNS changes needed. Set `API_TOKEN` (`openssl rand -hex 32`) and seed `./hermes-home/` — **step-by-step walkthrough: `doc/setup-hermes-integration.md`**. Full architecture, rollout phases, and security analysis (incl. mail prompt-injection guardrails): `.opencode/plans/002_PRD_hermes-agent-integration.md`.
 
 ## Version History
 
 **2026-07 — Hermes agent integration (PRD 002)**:
 - ✅ `API_TOKEN` bearer auth mode in `auth.py` (constant-time compare; off when unset) + `actor='agent'` ChangeLog attribution via `g.actor` default in `audit.record_change()`
 - ✅ `mcp_server/` FastMCP sidecar (streamable HTTP :8765) — ~26 typed tools wrapping the REST API (tasks/subtasks/spaces/notes/schedule/freeze/changelog/mail-read/email-to-task drafts), compose service `mcp`
-- ✅ Hermes destination: optional 6th tab (shortcut `6`, `#hermes`) embedding hermes-webui via lazy iframe; hidden when `HERMES_WEBUI_URL` unset; help modal updated
+- ✅ Hermes destination: optional 6th tab (shortcut `6`, `#hermes`) embedding hermes-webui via lazy iframe; hidden when unconfigured; help modal updated
+- ✅ Fully containerized: `hermes-webui` compose service (chat UI + agent, auto-installed into `./hermes-home`, no host port) + `/hermes-ui/` same-origin login-gated streaming proxy (`routes/hermes_proxy.py`) so the embed needs zero reverse-proxy changes; setup walkthrough in `doc/setup-hermes-integration.md`
 
 **2026-07 — Unified workspace (PrePRD 000)**:
 - ✅ Backend modularized: app factory + per-domain blueprints, audited-write seam (ChangeLog actor), scheduler pure-over-data, space_id migration finished
