@@ -1,0 +1,87 @@
+# Production compose using the published GitHub Container Registry images.
+# Pulls fresh images on every `docker compose up` (pull_policy: always) so
+# the CI/CD reload hook → `docker compose up -d` flow rolls forward without
+# a manual `pull`.
+#
+# Usage:
+#   1. Copy .env.example → .env and fill in SECRET_KEY / APP_PASSWORD /
+#      AI_* / API_TOKEN. The `API_TOKEN` value below is also read for the
+#      mcp sidecar so it can authenticate against the web service with the
+#      same bearer credential.
+#   2. `docker compose -f docker-compose.prod.yml up -d`
+#
+# Reload hook convention on the server:
+#   `docker compose -f docker-compose.prod.yml pull && up -d` on POST.
+#
+# Image names follow the CI matrix in .github/workflows/docker-build.yml:
+#   web: ghcr.io/utorque/simpler-task-manager:latest
+#   mcp: ghcr.io/utorque/simpler-task-manager-mcp:latest
+
+services:
+  web:
+    image: ghcr.io/utorque/simpler-task-manager:latest
+    pull_policy: always
+    ports:
+      - "53000:53000"
+    env_file:
+      - .env
+    environment:
+      # Same-origin embed of the hermes-webui service below: the app
+      # reverse-proxies it at /hermes-ui/ and the Hermes tab (shortcut 6)
+      # appears — no nginx/DNS changes needed. Comment this (and the
+      # hermes-webui service) out to run without the Hermes integration.
+      HERMES_WEBUI_INTERNAL_URL: http://hermes-webui:8787
+    volumes:
+      - ./instance:/app/instance
+    restart: unless-stopped
+
+  # simpler-mcp: MCP sidecar exposing the app's domain as agent tools
+  # (PRD 002 pillar A). Wraps the REST API with the API_TOKEN bearer
+  # credential; serves streamable HTTP at /mcp on the compose network.
+  # NOT exposed on the host — the hermes-webui service reaches it over the
+  # compose network at http://mcp:8765/mcp. If you run your own Hermes
+  # instance on the host, uncomment the `ports` block to expose it on the
+  # loopback interface and point your agent at http://localhost:8765/mcp.
+  #
+  # On its own (without hermes-webui) this sidecar is idle — it only does
+  # work when an MCP-compatible agent consumes it.
+  mcp:
+    image: ghcr.io/utorque/simpler-task-manager-mcp:latest
+    pull_policy: always
+    environment:
+      SIMPLER_BASE_URL: http://web:53000
+      SIMPLER_API_TOKEN: ${API_TOKEN:-}
+    # ports:
+    #   - "127.0.0.1:8765:8765"
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  # hermes-webui: chat UI + Hermes Agent, fully containerized (PRD 002
+  # pillar B). Uncomment the whole block to enable the Hermes destination
+  # (6th tab, shortcut 6). On first start the bootstrap auto-installs
+  # Hermes Agent into ./hermes-home (persisted, so later starts are fast
+  # and offline-safe). No host port: reachable ONLY through the app's
+  # authenticated /hermes-ui/ proxy, so Simpler's login is the single
+  # gate. Configure the agent (model API key, MCP servers) in
+  # ./hermes-home/config.yaml — see doc/setup-hermes-integration.md.
+  #
+  hermes-webui:
+    build:
+      # Pin to a tag/commit instead of master for reproducible rebuilds,
+      # e.g. ...hermes-webui.git#v1.2.3
+      context: https://github.com/nesquena/hermes-webui.git#master
+    environment:
+      HERMES_WEBUI_HOST: 0.0.0.0
+      HERMES_WEBUI_PORT: 8787
+      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui
+      HERMES_WEBUI_AUTO_INSTALL: "1"
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+      WANTED_UID: ${WANTED_UID:-1000}
+      WANTED_GID: ${WANTED_GID:-1000}
+    volumes:
+      - ./hermes-home:/home/hermeswebui/.hermes
+      - ./hermes-workspace:/workspace
+    depends_on:
+      - mcp
+    restart: unless-stopped

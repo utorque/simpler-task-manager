@@ -12,8 +12,8 @@ COPY src/ ./src/
 # Create directory for database
 RUN mkdir -p /app/instance
 
-# Expose port
-EXPOSE 5000
+# Expose port (src/app.py listens on 53000)
+EXPOSE 53000
 
 # Set environment variables
 ENV FLASK_APP=src/app.py
