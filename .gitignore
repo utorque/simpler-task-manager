@@ -11,3 +11,7 @@ env/
 *.log
 .venv/
 cookies.txt
+# Hermes agent state + workspace (bind-mounted into the hermes-webui
+# container; holds API keys, memory, sessions — never commit)
+hermes-home/
+hermes-workspace/
