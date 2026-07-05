@@ -101,7 +101,8 @@ class OpenAIProvider(AIProvider):
                 'space_id': None,
                 'priority': 5,
                 'deadline': None,
-                'estimated_duration': 60
+                'estimated_duration': 60,
+                'subtasks': []
             }]
         
         # Add current date and time to the user message for context
@@ -147,7 +148,8 @@ class OpenAIProvider(AIProvider):
                 'space_id': None,
                 'priority': 5,
                 'deadline': None,
-                'estimated_duration': 60
+                'estimated_duration': 60,
+                'subtasks': []
             }]
 
     def cleanify(self, note_text: str, system_prompt: str) -> str:
@@ -202,7 +204,8 @@ class AnthropicProvider(AIProvider):
                 'space_id': None,
                 'priority': 5,
                 'deadline': None,
-                'estimated_duration': 60
+                'estimated_duration': 60,
+                'subtasks': []
             }]
         
         # Add current date and time to the user message for context
@@ -234,7 +237,8 @@ class AnthropicProvider(AIProvider):
                 'space_id': None,
                 'priority': 5,
                 'deadline': None,
-                'estimated_duration': 60
+                'estimated_duration': 60,
+                'subtasks': []
             }]
 
     def cleanify(self, note_text: str, system_prompt: str) -> str:
@@ -280,9 +284,11 @@ def parse_task_with_ai(text: str, system_prompt: str) -> List[Dict[str, Any]]:
     - priority: Priority level (0-10)
     - deadline: ISO format datetime string or None
     - estimated_duration: Duration in minutes
-    
-    Note: The AI may return multiple tasks if the input clearly describes
-    multiple distinct tasks, but will prefer returning a single task.
+    - subtasks: List of subtask title strings (may be empty)
+
+    Note: The prompt instructs the AI to ALWAYS return a single task; multiple
+    items in the input become subtasks of that one task. The list return shape
+    is kept for the callers' sake (and tolerates a legacy multi-task response).
     """
     provider = get_ai_provider()
     return provider.parse_task(text, system_prompt)
@@ -311,6 +317,7 @@ def email_to_task_with_ai(subject: str, body: str, system_prompt: str) -> List[D
         'priority': 5,
         'deadline': None,
         'estimated_duration': 60,
+        'subtasks': [],
     }]
 
 

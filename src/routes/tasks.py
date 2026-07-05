@@ -8,10 +8,30 @@ from ai_parser import parse_task_with_ai, select_tasks_with_ai
 from audit import record_change
 from auth import login_required
 from datetime_utils import parse_iso_datetime
-from models import db, Task, TASK_STATUSES
+from models import db, Task, Subtask, Note, TASK_STATUSES
 from prompt_context import build_task_parse_prompt, resolve_space
 
 tasks_bp = Blueprint('tasks', __name__)
+
+
+def _attach_subtasks(task, items):
+    """Append subtasks from a client/AI payload: a list of title strings or
+    {'title': ..., 'done': ...} dicts. Blank titles are skipped. Appends after
+    any existing subtasks (positions keep creation order)."""
+    if not isinstance(items, list):
+        return
+    next_position = max((s.position for s in task.subtasks), default=-1) + 1
+    for item in items:
+        if isinstance(item, dict):
+            title = str(item.get('title') or '').strip()
+            done = bool(item.get('done'))
+        else:
+            title = str(item or '').strip()
+            done = False
+        if not title:
+            continue
+        task.subtasks.append(Subtask(title=title[:500], done=done, position=next_position))
+        next_position += 1
 
 
 @tasks_bp.route('/api/tasks', methods=['GET'])
@@ -36,14 +56,32 @@ def create_task():
     if status not in TASK_STATUSES:
         return jsonify({'error': f"invalid status {status!r}, expected one of {list(TASK_STATUSES)}"}), 400
 
+    # note_id = provenance link (task promoted from a note). Creation-time
+    # title fallback: an empty title borrows the source note's title.
+    note_id = data.get('note_id')
+    note = db.session.get(Note, note_id) if note_id else None
+    if note_id and note is None:
+        return jsonify({'error': f'note {note_id} not found'}), 400
+
+    title = (data.get('title') or '').strip()
+    if not title and note is not None:
+        title = (note.title or '').strip()
+    if not title and note is None:
+        return jsonify({'error': 'title is required'}), 400
+    # A task linked to a still-untitled note may be created title-less: the
+    # note-save backfill (update_note) fills it once the note gets a # title.
+
     task = Task(
-        title=data['title'],
+        title=title,
         description=data.get('description'),
         space_id=data.get('space_id'),
+        note_id=note_id,
         priority=data.get('priority', 0),
         deadline=parse_iso_datetime(data.get('deadline')),
         estimated_duration=data.get('estimated_duration', 60)
     )
+    _attach_subtasks(task, data.get('subtasks'))
+    # After subtasks: status='done' auto-checks them (two-way sync).
     task.apply_status(status)
 
     db.session.add(task)
@@ -99,6 +137,7 @@ def parse_task():
             deadline=parse_iso_datetime(task_data.get('deadline')),
             estimated_duration=task_data.get('estimated_duration', 60)
         )
+        _attach_subtasks(task, task_data.get('subtasks'))
 
         db.session.add(task)
         db.session.flush()
@@ -177,6 +216,71 @@ def delete_task(task_id):
     db.session.commit()
 
     return jsonify({'success': True})
+
+
+# ===== Subtasks =====
+# Audit convention: every subtask mutation is recorded as an 'update' on the
+# PARENT task (whose to_dict embeds the subtask list) — subtasks are not a
+# separate audited entity. All three routes return the full parent task dict
+# so the client sees any status flip caused by the two-way sync.
+
+@tasks_bp.route('/api/tasks/<int:task_id>/subtasks', methods=['POST'])
+@login_required
+def create_subtask(task_id):
+    task = Task.query.get_or_404(task_id)
+    data = request.json or {}
+    title = str(data.get('title') or '').strip()
+    if not title:
+        return jsonify({'error': 'title is required'}), 400
+
+    old_value = task.to_dict()
+    _attach_subtasks(task, [title])
+    # A fresh (undone) subtask on a done task pulls it back to doing.
+    task.sync_status_from_subtasks()
+    record_change('update', 'task', task.id, old=old_value, new=task.to_dict())
+    db.session.commit()
+
+    return jsonify(task.to_dict()), 201
+
+
+@tasks_bp.route('/api/subtasks/<int:subtask_id>', methods=['PUT'])
+@login_required
+def update_subtask(subtask_id):
+    subtask = Subtask.query.get_or_404(subtask_id)
+    task = subtask.task
+    old_value = task.to_dict()
+
+    data = request.json or {}
+    if 'title' in data:
+        title = str(data.get('title') or '').strip()
+        if not title:
+            return jsonify({'error': 'title cannot be empty'}), 400
+        subtask.title = title[:500]
+    if 'done' in data:
+        subtask.done = bool(data['done'])
+
+    task.sync_status_from_subtasks()
+    record_change('update', 'task', task.id, old=old_value, new=task.to_dict())
+    db.session.commit()
+
+    return jsonify(task.to_dict())
+
+
+@tasks_bp.route('/api/subtasks/<int:subtask_id>', methods=['DELETE'])
+@login_required
+def delete_subtask(subtask_id):
+    subtask = Subtask.query.get_or_404(subtask_id)
+    task = subtask.task
+    old_value = task.to_dict()
+
+    task.subtasks.remove(subtask)
+    # Deleting the last undone subtask can complete the task (sync no-ops if
+    # the list became empty).
+    task.sync_status_from_subtasks()
+    record_change('update', 'task', task.id, old=old_value, new=task.to_dict())
+    db.session.commit()
+
+    return jsonify(task.to_dict())
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>/toggle-freeze', methods=['POST'])

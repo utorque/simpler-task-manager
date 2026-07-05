@@ -36,11 +36,23 @@ class Task(db.Model):
     completed = db.Column(db.Boolean, default=False)
     completed_at = db.Column(db.DateTime)  # set when the task turns done, cleared when it un-dones
     frozen = db.Column(db.Boolean, default=False)  # Prevents rescheduling when True
+    # Provenance: the note this task was promoted from (one-way — the note
+    # knows nothing about its tasks). SQLite runs without PRAGMA foreign_keys,
+    # so the ON DELETE SET NULL is enforced in the note delete route, not here.
+    note_id = db.Column(db.Integer, db.ForeignKey('notes.id', ondelete='SET NULL'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationship to Space
     space_rel = db.relationship('Space', backref='tasks', foreign_keys=[space_id])
+    note_rel = db.relationship('Note', foreign_keys=[note_id], lazy='selectin')
+
+    # Subtasks: checklist items under this task. selectin avoids N+1 on the
+    # board's load-all-tasks query. delete-orphan: a subtask never outlives
+    # its task.
+    subtasks = db.relationship(
+        'Subtask', backref='task', cascade='all, delete-orphan',
+        order_by='Subtask.position, Subtask.id', lazy='selectin')
 
     def apply_status(self, status):
         """Set the kanban status and keep `completed` (+ completed_at) in sync."""
@@ -48,16 +60,34 @@ class Task(db.Model):
             raise ValueError(f"invalid status {status!r}, expected one of {TASK_STATUSES}")
         self.status = status
         self.completed = (status == 'done')
+        if self.completed:
+            # Two-way sync, manual direction: marking the task done checks
+            # every remaining subtask.
+            for subtask in self.subtasks:
+                subtask.done = True
         self._sync_completed_at()
 
     def apply_completed(self, completed):
         """Legacy write path: setting `completed` derives `status`."""
-        self.completed = bool(completed)
-        if self.completed:
-            self.status = 'done'
+        if completed:
+            self.apply_status('done')
         elif self.status == 'done':
-            self.status = 'todo'
-        self._sync_completed_at()
+            self.apply_status('todo')
+        else:
+            self.completed = False
+            self._sync_completed_at()
+
+    def sync_status_from_subtasks(self):
+        """Two-way sync, subtask direction. Call after any subtask mutation:
+        all subtasks done ⇒ task done; an undone subtask on a done task ⇒
+        back to doing. No-op for tasks without subtasks."""
+        if not self.subtasks:
+            return
+        if all(subtask.done for subtask in self.subtasks):
+            if self.status != 'done':
+                self.apply_status('done')
+        elif self.status == 'done':
+            self.apply_status('doing')
 
     def _sync_completed_at(self):
         # First transition into done stamps the time; re-saving an
@@ -84,11 +114,36 @@ class Task(db.Model):
             'scheduled_start': self.scheduled_start.isoformat() if self.scheduled_start else None,
             'scheduled_end': self.scheduled_end.isoformat() if self.scheduled_end else None,
             'status': self.status or 'todo',
+            'note_id': self.note_id,
+            'note_title': self.note_rel.title if self.note_rel else None,
+            'subtasks': [subtask.to_dict() for subtask in self.subtasks],
             'completed': self.completed,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'frozen': self.frozen,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
+        }
+
+
+class Subtask(db.Model):
+    """A checklist item under a Task. Title-only by design — no priority,
+    deadline, or scheduling: subtasks are steps of one task, not tasks."""
+    __tablename__ = 'subtasks'
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id', ondelete='CASCADE'), nullable=False)
+    title = db.Column(db.String(500), nullable=False)
+    done = db.Column(db.Boolean, default=False, nullable=False)
+    position = db.Column(db.Integer, default=0, nullable=False)  # creation order
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'task_id': self.task_id,
+            'title': self.title,
+            'done': self.done,
+            'position': self.position,
         }
 
 

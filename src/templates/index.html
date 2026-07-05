@@ -468,6 +468,19 @@
                         <label class="form-label">Deadline</label>
                         <input type="datetime-local" class="form-control" id="editDeadline">
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label d-flex justify-content-between align-items-center">
+                            Subtasks
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="addSubtaskBtn" title="Add subtask">+</button>
+                        </label>
+                        <div id="editSubtasksList"></div>
+                        <div id="editSubtaskNew" class="mt-1"></div>
+                    </div>
+                    <div class="mb-2 d-none" id="editNoteLinkWrap">
+                        <a href="#" id="editNoteLink" class="small text-decoration-none">
+                            <i class="fas fa-note-sticky"></i> <span id="editNoteLinkLabel">Open source note</span>
+                        </a>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-danger" id="deleteTaskBtn">Delete</button>
@@ -597,6 +610,8 @@
                             <tr><td><kbd>Esc</kbd> / empty click / view switch</td><td>Clear the multi-selection (also clears after each action)</td></tr>
                             <tr><td><kbd>Enter</kbd> in a column's + input</td><td>Create task in that column</td></tr>
                             <tr><td>Drag a card within its column</td><td>Reorder it (nudges only that task's priority)</td></tr>
+                            <tr><td><kbd>+</kbd> under a card's priority badge</td><td>Add a subtask inline (as-is, no AI; <kbd>Enter</kbd> adds, <kbd>Esc</kbd> cancels)</td></tr>
+                            <tr><td>Tick a subtask (Doing card)</td><td>Check it off right on the card — checking the last one marks the task done</td></tr>
                             <tr><td><kbd>Ctrl</kbd>+<kbd>Click</kbd> a space chip</td><td>Add/remove the space to the filter (view several spaces at once; also in Notes)</td></tr>
                             <tr><td><kbd>Alt</kbd>+<kbd>Click</kbd> a space chip</td><td>Exclude the space — chip greys out, its tasks/notes are hidden (<kbd>Alt</kbd>+<kbd>Click</kbd> again or "All" to restore; also in Notes)</td></tr>
                             <tr><td><i class="fas fa-magic"></i> in the Doing column</td><td>Tell the AI what you want to do — it moves the matching to-dos to Doing</td></tr>

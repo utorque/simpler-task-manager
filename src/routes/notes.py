@@ -7,7 +7,7 @@ from flask import Blueprint, current_app, jsonify, request
 from ai_parser import cleanify_note_with_ai, parse_task_with_ai
 from audit import record_change
 from auth import login_required
-from models import db, Note
+from models import db, Note, Task
 from prompt_context import build_task_parse_prompt
 
 notes_bp = Blueprint('notes', __name__)
@@ -69,6 +69,19 @@ def update_note(note_id):
         note.space_id = data['space_id']
 
     record_change('update', 'note', note.id, old=old_value, new=note.to_dict())
+
+    # Title backfill, re-checked on EVERY note save: tasks promoted from this
+    # note while it was untitled stay title-less until the note gets its
+    # `# title` — then they take it. Only fills empty task titles, never
+    # overwrites one the user or AI set.
+    new_title = (note.title or '').strip()
+    if new_title:
+        for task in Task.query.filter_by(note_id=note.id).all():
+            if not (task.title or '').strip():
+                task_old = task.to_dict()
+                task.title = new_title
+                record_change('update', 'task', task.id, old=task_old, new=task.to_dict())
+
     db.session.commit()
 
     return jsonify(note.to_dict())
@@ -80,6 +93,9 @@ def delete_note(note_id):
     note = Note.query.get_or_404(note_id)
     old_value = note.to_dict()
 
+    # ORM-level ON DELETE SET NULL: SQLite runs without PRAGMA foreign_keys,
+    # so the FK's SET NULL never fires — detach linked tasks here instead.
+    Task.query.filter_by(note_id=note_id).update({'note_id': None})
     db.session.delete(note)
     record_change('delete', 'note', note_id, old=old_value)
     db.session.commit()
@@ -122,9 +138,14 @@ def promote_note_to_task(note_id):
 
     # Default each draft's space_id to the note's space_id when the LLM did not
     # pick one (default, NOT override — LLM-chosen spaces are left alone).
+    # Tag provenance (note_id) so the created task links back to this note,
+    # and borrow the note's title when the AI produced none.
     for draft in drafts:
         if draft.get('space_id') is None:
             draft['space_id'] = note.space_id
+        draft['note_id'] = note.id
+        if not (draft.get('title') or '').strip():
+            draft['title'] = note.title
 
     # Return the draft DTO list. The client opens a confirm modal pre-filled
     # with these drafts; the existing POST /api/tasks persists them. This

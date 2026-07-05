@@ -18,10 +18,21 @@ window.TaskDraftModal = (function () {
         const deadlineVal = draft.deadline
             ? String(draft.deadline).replace(' ', 'T').slice(0, 16)
             : '';
+        const subtaskRows = (draft.subtasks || []).map(s => {
+            const title = typeof s === 'string' ? s : (s && s.title) || '';
+            return subtaskRow(title);
+        }).join('');
         return `
             <div class="mb-2">
                 <label class="form-label small">Title</label>
                 <input class="form-control form-control-sm" data-field="title" value="${escapeHtml(draft.title || '')}">
+            </div>
+            <div class="mb-2">
+                <label class="form-label small d-flex justify-content-between align-items-center w-100">
+                    Subtasks
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" data-act="add-subtask" title="Add subtask">+</button>
+                </label>
+                <div data-role="subtasks">${subtaskRows}</div>
             </div>
             <div class="row g-2 mb-2">
                 <div class="col">
@@ -48,11 +59,23 @@ window.TaskDraftModal = (function () {
         `;
     }
 
+    function subtaskRow(title) {
+        return `
+            <div class="d-flex align-items-center gap-1 mb-1" data-role="subtask-row">
+                <input class="form-control form-control-sm" data-role="subtask-title" value="${escapeHtml(title)}">
+                <button type="button" class="btn-close" style="font-size:.6rem" data-act="remove-subtask" aria-label="Remove subtask"></button>
+            </div>`;
+    }
+
     function readForm(modalEl) {
         const get = (f) => {
             const el = modalEl.querySelector(`[data-field="${f}"]`);
             return el ? el.value : '';
         };
+        const subtasks = Array.from(
+            modalEl.querySelectorAll('[data-role="subtask-title"]'))
+            .map(el => el.value.trim())
+            .filter(Boolean);
         return {
             title: get('title').trim(),
             description: get('description') || null,
@@ -60,6 +83,7 @@ window.TaskDraftModal = (function () {
             priority: Number(get('priority')) || 0,
             estimated_duration: Number(get('estimated_duration')) || 60,
             deadline: get('deadline') || null,
+            subtasks: subtasks,
         };
     }
 
@@ -84,11 +108,26 @@ window.TaskDraftModal = (function () {
             document.body.appendChild(backdrop);
 
             const close = () => backdrop.remove();
+            // Subtask row add/remove (rows are read back on confirm).
+            card.addEventListener('click', (e) => {
+                if (e.target.closest('[data-act="add-subtask"]')) {
+                    const holder = card.querySelector('[data-role="subtasks"]');
+                    holder.insertAdjacentHTML('beforeend', subtaskRow(''));
+                    holder.lastElementChild.querySelector('input').focus();
+                } else if (e.target.closest('[data-act="remove-subtask"]')) {
+                    e.target.closest('[data-role="subtask-row"]').remove();
+                }
+            });
             card.querySelector('[data-act="cancel"]').addEventListener('click', () => { close(); resolve(null); });
             backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { close(); resolve(null); } });
             card.querySelector('[data-act="confirm"]').addEventListener('click', async () => {
                 const body = readForm(card);
-                if (!body.title) { alert('Title is required'); return; }
+                // Provenance passthrough: promote-to-task drafts carry the
+                // source note's id (not a form field — never user-edited).
+                if (draft.note_id != null) body.note_id = draft.note_id;
+                // Note-linked drafts may stay untitled: the note-save
+                // backfill names the task once the note gets a # title.
+                if (!body.title && body.note_id == null) { alert('Title is required'); return; }
                 const btn = card.querySelector('[data-act="confirm"]');
                 btn.disabled = true;
                 btn.textContent = 'Creating…';

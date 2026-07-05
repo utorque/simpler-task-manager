@@ -582,5 +582,24 @@ window.NotesView = (function () {
         if (easyMDE) easyMDE.codemirror.refresh();
     }
 
-    return { enter, saveNow };
+    // Open a specific note from outside the Notes view (task → source-note
+    // jump). Ensures the view is initialized and loaded; falls back to a
+    // direct fetch when the note is filtered out of the current space
+    // selection. Returns true when the note was opened.
+    async function openNoteById(noteId) {
+        await enter();
+        let note = state.notes.find(n => n.id === noteId);
+        if (!note) {
+            try {
+                note = await api(`/api/notes/${noteId}`);
+            } catch (e) {
+                note = null; // 404 body isn't JSON → treat as not found
+            }
+        }
+        if (!note || !note.id) return false;
+        openNote(note);
+        return true;
+    }
+
+    return { enter, saveNow, openNoteById };
 })();

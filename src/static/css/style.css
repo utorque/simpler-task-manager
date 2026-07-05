@@ -1015,12 +1015,103 @@ body {
 
 .board-card-meta {
     display: flex;
-    gap: 10px;
+    gap: 4px 10px;
     flex-wrap: wrap;
     font-size: 11px;
     color: #718096;
     margin-top: 6px;
     align-items: center;
+}
+
+/* Each tag wraps as a unit: crowded metas break into a second line between
+   tags, never inside one (icon and its text stay together). */
+.board-card-meta > span,
+.board-card-meta > .task-space {
+    white-space: nowrap;
+}
+
+/* Note-provenance badge: jump to the source note */
+.board-card-notelink {
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 11px;
+    color: #718096;
+    cursor: pointer;
+}
+
+.board-card-notelink:hover {
+    color: #2d3748;
+}
+
+/* Right column of a board card: priority badge with the add-subtask + below */
+.board-card-side {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.board-card-addsub {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed #cbd5e0;
+    border-radius: 50%;
+    background: none;
+    color: #a0aec0;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.board-card-addsub:hover {
+    color: #4a5568;
+    border-color: #a0aec0;
+}
+
+/* Open (unchecked) subtasks listed on Doing cards */
+.board-card-subtasks {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.board-card-subtask {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    font-size: 12px;
+    color: #4a5568;
+    cursor: pointer;
+    word-break: break-word;
+}
+
+.board-card-subtask input {
+    margin-top: 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.board-subtask-input {
+    width: 100%;
+    margin-top: 6px;
+    padding: 2px 6px;
+    font-size: 12px;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+}
+
+/* Checked subtasks: hidden on cards, crossed out in the edit modal */
+.subtask-done {
+    text-decoration: line-through;
+    color: #a0aec0;
 }
 
 .board-empty {

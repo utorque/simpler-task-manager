@@ -104,11 +104,24 @@ simpler-smart-calendar/
 | completed | BOOLEAN | DEFAULT FALSE | Kept in sync: completed ⇔ status == 'done' |
 | completed_at | DATETIME | NULLABLE | Stamped on the first transition into done; cleared when leaving done; preserved on re-saves of a done task |
 | frozen | BOOLEAN | DEFAULT FALSE | Prevents auto-rescheduling (orthogonal to status) |
+| note_id | INTEGER | NULLABLE FK notes.id | Provenance: the note this task was promoted from (one-way link). Nulled by the note delete route (SQLite runs without PRAGMA foreign_keys, so the FK's SET NULL is enforced in ORM code) |
 | created_at / updated_at | DATETIME | | utcnow / onupdate utcnow |
 
 **Status/completed invariant**: `status` is the single source of truth for done-ness. Writing `status='done'` flips `completed=True`; any other status flips it back. Legacy callers writing `completed` get `status` derived (`done`, or `todo` when un-completing). When both are sent, `status` wins.
 
-`to_dict()` echoes `space` (the name) denormalized from the `space_rel` relation — `space_id` is canonical.
+`to_dict()` echoes `space` (the name) denormalized from the `space_rel` relation — `space_id` is canonical, and embeds the full `subtasks` list.
+
+### `subtasks`
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INTEGER | PRIMARY KEY | |
+| task_id | INTEGER | NOT NULL FK tasks.id ON DELETE CASCADE | Parent task |
+| title | STRING(500) | NOT NULL | The only content field — subtasks are checklist items, not tasks (no priority/deadline/duration/scheduling) |
+| done | BOOLEAN | NOT NULL DEFAULT FALSE | |
+| position | INTEGER | NOT NULL DEFAULT 0 | Creation order |
+| created_at | DATETIME | | |
+
+**Two-way status sync** (`Task.sync_status_from_subtasks` + `apply_status`): checking the last open subtask marks the task `done`; unchecking a subtask of a done task pulls it back to `doing`; adding an open subtask to a done task also reopens it to `doing`; manually marking the task done auto-checks every subtask. Tasks without subtasks are untouched. Subtask mutations are audited as `update` ChangeLog rows on the **parent task**.
 
 ### `spaces`
 `id`, `name` (unique), `description` (helps the AI infer context), `context_markdown` (user-editable AI guidance — see AI Integration), `time_constraints` (JSON string), `created_at`.
@@ -166,10 +179,13 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 
 ### Tasks (`src/routes/tasks.py`)
 - `GET /api/tasks?include_completed=true|false` — ordered by priority desc, deadline asc
-- `POST /api/tasks` — `{title, description?, space_id?, priority?, deadline?, estimated_duration?, status?}`; invalid `status` → 400
-- `POST /api/tasks/parse` — `{text, space_hint?}` → AI parse (may create several tasks; single object returned when one, array when several). ChangeLog actor = 'ai'
-- `PUT /api/tasks/<id>` — any subset of fields; `status` and `completed` kept in sync (status wins)
-- `DELETE /api/tasks/<id>`
+- `POST /api/tasks` — `{title, description?, space_id?, priority?, deadline?, estimated_duration?, status?, subtasks?, note_id?}`; `subtasks` is a list of title strings (or `{title, done?}` dicts); `note_id` links the task to its source note; an empty `title` borrows the note's title at creation time — and when the note is still untitled the task may be created title-less (backfilled on note save); empty title with no note → 400; invalid `status`/unknown `note_id` → 400
+- `POST /api/tasks/parse` — `{text, space_hint?}` → AI parse. The prompt always yields ONE task; listed items/steps in the input become its `subtasks`. ChangeLog actor = 'ai'
+- `PUT /api/tasks/<id>` — any subset of fields; `status` and `completed` kept in sync (status wins); `status='done'` auto-checks all subtasks
+- `DELETE /api/tasks/<id>` — cascades to subtasks
+- `POST /api/tasks/<id>/subtasks` — `{title}` adds one subtask as-is (no AI); reopens a done parent to `doing`
+- `PUT /api/subtasks/<id>` — `{done?, title?}`; runs the two-way status sync; returns the full parent task
+- `DELETE /api/subtasks/<id>` — returns the full parent task (deleting the last open subtask can complete it)
 - `POST /api/tasks/<id>/toggle-freeze`
 - `POST /api/tasks/freeze-day` — `{date: YYYY-MM-DD}` toggles freeze for all tasks scheduled that day
 - `POST /api/tasks/reorder` — `{task_id, priority}` nudges ONLY the dragged task's priority (fractional values allowed, clamped 0-10); manual drag-reorder never rewrites the rest of the list
@@ -185,9 +201,9 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 ### Notes (`src/routes/notes.py`)
 - `GET /api/notes?space_id=` — DTOs ordered by updated_at desc; `space_id` may repeat (`?space_id=1&space_id=3`) to get the union of several spaces; absent = all
 - `POST /api/notes` — `{space_id (required), title?, content_markdown?}`
-- `GET/PUT/DELETE /api/notes/<id>`
+- `GET/PUT/DELETE /api/notes/<id>` — PUT re-runs the title backfill on every save: linked tasks (`note_id`) whose title is still empty take the note's title; DELETE detaches linked tasks (`note_id → NULL`)
 - `POST /api/notes/<id>/cleanify` — → `{content}`; does NOT persist (the editor applies it and the debounced PUT autosave persists). Degrades to the original content on AI failure
-- `POST /api/notes/<id>/promote-to-task` — `{selected_text}` → task draft DTOs (space defaulting to the note's); persists nothing
+- `POST /api/notes/<id>/promote-to-task` — `{selected_text}` → task draft DTOs (space defaulting to the note's, `note_id` provenance tag, empty AI title borrows the note's); persists nothing
 
 ### Mail (`src/routes/mailboxes.py`)
 - `GET /api/mailboxes` — DTOs with `has_password`, never the password
@@ -242,7 +258,7 @@ Provider abstraction in `ai_parser.py`: `OpenAIProvider` (any OpenAI-compatible 
 
 | Entry point | Prompt file | Post-processing | Degradation |
 |---|---|---|---|
-| `parse_task_with_ai` | `src/prompts/task_creation.md` (+ spaces context) | JSON → task dicts, relative deadlines normalized | trivial title/description draft |
+| `parse_task_with_ai` | `src/prompts/task_creation.md` (+ spaces context) | JSON → task dicts, relative deadlines normalized. Prompt mandates a SINGLE task; listed items become `subtasks` (list of strings) | trivial title/description draft |
 | `cleanify_note_with_ai` | `src/prompts/notes_cleanify.md` (+ note's Space context) | raw text | original note returned unchanged |
 | `email_to_task_with_ai` | `src/prompts/email_to_task.md` (+ spaces context) | reuses `parse_task` seam | subject/body-derived draft |
 | `select_tasks_with_ai` | `src/prompts/task_selection.md` | reuses `cleanify` seam (raw completion); JSON id array normalized to candidate subset | returns `None` → route responds 502 |
@@ -264,22 +280,21 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 
 ## Database migrations
 
-`migrate_db.py` (repo root) is the supported migration path — no Alembic. It:
+`migrate_db.py` (repo root) is the supported migration path — no Alembic. Standalone (stdlib-only: `sqlite3` + `shutil`), so it can be copied to the server and run without the app's dependencies. It:
 
-1. **CREATEs missing tables** and **ADDs missing columns** (additive-only diff of `db.metadata` vs the SQLite file; never drops anything).
-2. Runs **idempotent data fixups**: backfills `tasks.space_id` from the legacy `tasks.space` name, `tasks.status='done'` from `completed=1`, and `tasks.completed_at` from `updated_at` for already-done tasks.
+1. **Backs up** the DB first (`tasks.db.bak-<timestamp>` alongside the file).
+2. Applies **additive, idempotent DDL** (currently: the `subtasks` table + index, and the `tasks.note_id` column; safe to re-run).
 
 ```bash
-python migrate_db.py --dry-run          # print the plan
-python migrate_db.py --yes              # apply
-python migrate_db.py --db path/to/tasks.db
+python3 migrate_db.py                    # default: ./instance/tasks.db
+python3 migrate_db.py path/to/tasks.db
 ```
 
 Run it after pulling code that changes `models.py`, before `docker compose up`.
 
 ## Testing
 
-`pytest` (57 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
+`pytest` (122 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB.
 
 ```bash
 python -m pytest -q

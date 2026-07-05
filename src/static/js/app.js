@@ -118,6 +118,13 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('helpBtn').addEventListener('click', () => helpModal.show());
     document.getElementById('saveTaskBtn').addEventListener('click', saveTask);
     document.getElementById('deleteTaskBtn').addEventListener('click', deleteTask);
+    wireModalSubtasks();
+    document.getElementById('editNoteLink').addEventListener('click', (e) => {
+        e.preventDefault();
+        const taskId = parseInt(document.getElementById('editTaskId').value);
+        hideModalSafely(taskModal, 'taskModal');
+        openTaskSourceNote(taskId);
+    });
     document.getElementById('saveCalendarBtn').addEventListener('click', saveCalendar);
     document.getElementById('createTaskFromModalBtn').addEventListener('click', createTaskFromModal);
 
@@ -355,6 +362,36 @@ function wireTaskClickDelegation(containerId, selector) {
         const item = e.target.closest(selector);
         if (!item) return;
         const taskId = parseInt(item.dataset.taskId);
+
+        if (item.classList.contains('board-card')) {
+            // Subtask checkbox row: check it off right from the card.
+            const subtaskEl = e.target.closest('.board-card-subtask');
+            if (subtaskEl) {
+                e.preventDefault();
+                e.stopPropagation();
+                setSubtaskDone(parseInt(subtaskEl.dataset.subtaskId), true);
+                return;
+            }
+            // + under the priority badge: inline add-subtask input (no AI).
+            if (e.target.closest('.board-card-addsub')) {
+                e.preventDefault();
+                e.stopPropagation();
+                openCardSubtaskInput(item, taskId);
+                return;
+            }
+            // Clicks inside the inline add-subtask input must not open the modal.
+            if (e.target.closest('.board-subtask-input')) {
+                e.stopPropagation();
+                return;
+            }
+            // Note badge: jump to the source note in the Notes destination.
+            if (e.target.closest('.board-card-notelink')) {
+                e.preventDefault();
+                e.stopPropagation();
+                openTaskSourceNote(taskId);
+                return;
+            }
+        }
 
         // Inline priority edit (board card only): a plain click on the
         // board-card-priority badge turns it into a number input. Must not
@@ -855,19 +892,38 @@ function renderBoardCard(task) {
     const deadlineStr = deadline ? formatDeadline(deadline) : '';
     const isSoon = deadline && (deadline - new Date()) < 24 * 60 * 60 * 1000;
 
+    const subtasks = task.subtasks || [];
+    const subtasksDone = subtasks.filter(s => s.done).length;
+    // Checked subtasks never show on the card — only in the edit modal
+    // (crossed out there). Doing cards list the open ones as live checkboxes.
+    const openSubtasks = subtasks.filter(s => !s.done);
+    const subtaskList = (task.status === 'doing' && openSubtasks.length) ? `
+            <div class="board-card-subtasks">
+                ${openSubtasks.map(s => `
+                <label class="board-card-subtask" data-subtask-id="${s.id}">
+                    <input type="checkbox"><span>${escapeHtml(s.title)}</span>
+                </label>`).join('')}
+            </div>` : '';
+
     return `
         <div class="board-card ${priorityClass} ${task.completed ? 'completed' : ''} ${task.frozen ? 'frozen' : ''}"
              data-task-id="${task.id}">
             <div class="board-card-top">
-                <div class="board-card-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title)}</div>
-                <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
+                <div class="board-card-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title || '(untitled)')}</div>
+                <div class="board-card-side">
+                    <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
+                    <button type="button" class="board-card-addsub" title="Add subtask">+</button>
+                </div>
             </div>
             <div class="board-card-meta">
                 ${task.space ? `<span class="task-space">${escapeHtml(task.space)}</span>` : ''}
                 ${deadlineStr ? `<span class="task-deadline ${isSoon ? 'soon' : ''}"><i class="fas fa-calendar-times"></i> ${deadlineStr}</span>` : ''}
                 ${task.estimated_duration ? `<span><i class="fas fa-clock"></i> ${task.estimated_duration}min</span>` : ''}
+                ${subtasks.length ? `<span class="board-card-subcount" title="Subtasks done"><i class="fas fa-list-check"></i> ${subtasksDone}/${subtasks.length}</span>` : ''}
                 ${task.scheduled_start ? `<span title="Scheduled"><i class="fas fa-calendar-check"></i></span>` : ''}
+                ${task.note_id ? `<button type="button" class="board-card-notelink" title="Open source note${task.note_title ? `: ${escapeHtml(task.note_title)}` : ''}"><i class="fas fa-note-sticky"></i></button>` : ''}
             </div>
+            ${subtaskList}
         </div>
     `;
 }
@@ -944,6 +1000,95 @@ function openPriorityEditor(cardEl, taskId) {
         }
     });
     input.addEventListener('blur', () => revert());
+}
+
+// ===== Note provenance =====
+
+// Jump from a task to the note it was promoted from (one-way link).
+async function openTaskSourceNote(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || !task.note_id) return;
+    switchDestination('notes');
+    const found = await NotesView.openNoteById(task.note_id);
+    if (!found) showAlert('Source note not found', 'warning');
+}
+
+// ===== Subtasks =====
+
+// The server returns the full parent task (the two-way sync may flip its
+// status), so every mutation ends in a board + calendar refresh.
+async function setSubtaskDone(subtaskId, done) {
+    const r = await fetch(`/api/subtasks/${subtaskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done })
+    });
+    if (r.ok) {
+        await loadTasks();
+        calendar.refetchEvents();
+    } else {
+        showAlert('Error updating subtask', 'danger');
+    }
+    return r.ok;
+}
+
+async function addSubtaskToTask(taskId, title) {
+    const r = await fetch(`/api/tasks/${taskId}/subtasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title })
+    });
+    if (r.ok) {
+        await loadTasks();
+        calendar.refetchEvents();
+    } else {
+        const err = await r.json().catch(() => ({}));
+        showAlert(err.error || 'Error adding subtask', 'danger');
+    }
+    return r.ok;
+}
+
+async function deleteSubtask(subtaskId) {
+    const r = await fetch(`/api/subtasks/${subtaskId}`, { method: 'DELETE' });
+    if (r.ok) {
+        await loadTasks();
+        calendar.refetchEvents();
+    } else {
+        showAlert('Error deleting subtask', 'danger');
+    }
+    return r.ok;
+}
+
+// + on a board card → inline input on the card; Enter adds the subtask
+// directly (as-is, no AI parse), Esc/blur cancels.
+function openCardSubtaskInput(cardEl, taskId) {
+    const existing = cardEl.querySelector('.board-subtask-input');
+    if (existing) { existing.focus(); return; }
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'New subtask…';
+    input.className = 'board-subtask-input';
+    cardEl.appendChild(input);
+    input.focus();
+
+    let closed = false;
+    const close = () => { if (!closed) { closed = true; input.remove(); } };
+
+    input.addEventListener('keydown', async (e) => {
+        e.stopPropagation(); // keep board shortcuts (Enter=done on selection…) out
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const title = input.value.trim();
+            if (!title) { close(); return; }
+            closed = true; // loadTasks re-renders the card, removing the input
+            await addSubtaskToTask(taskId, title);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            close();
+        }
+    });
+    input.addEventListener('blur', close);
 }
 
 // ===== Calendar (preserved as-is) =====
@@ -1079,7 +1224,7 @@ function renderTasks() {
 
         taskDiv.innerHTML = `
             <div class="task-priority ${priorityClass}">${displayPriority(task.priority)}</div>
-            <div class="task-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title)}</div>
+            <div class="task-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title || '(untitled)')}</div>
             <div class="task-meta">
                 ${task.space ? `<span class="task-space"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(task.space)}</span>` : ''}
                 ${task.estimated_duration ? `<span class="task-meta-item"><i class="fas fa-clock"></i> ${task.estimated_duration}min</span>` : ''}
@@ -1369,7 +1514,88 @@ function editTask(taskId) {
         document.getElementById('editDeadline').value = '';
     }
 
+    renderModalSubtasks(task.id);
+
+    // Provenance link: only for tasks promoted from a note.
+    const noteWrap = document.getElementById('editNoteLinkWrap');
+    noteWrap.classList.toggle('d-none', !task.note_id);
+    document.getElementById('editNoteLinkLabel').textContent =
+        task.note_title ? `Open source note: ${task.note_title}` : 'Open source note';
+
     taskModal.show();
+}
+
+// Subtask list inside the edit modal. Unlike the task fields (batched into
+// Save), subtask ops hit the API immediately — the two-way status sync can
+// flip the task's status, which is re-read into the Status select.
+function renderModalSubtasks(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    const list = document.getElementById('editSubtasksList');
+    const subtasks = (task && task.subtasks) || [];
+    list.innerHTML = subtasks.map(s => `
+        <div class="d-flex align-items-center gap-2 mb-1" data-subtask-id="${s.id}">
+            <input class="form-check-input mt-0 flex-shrink-0" type="checkbox" data-act="toggle" ${s.done ? 'checked' : ''}>
+            <span class="flex-grow-1 small ${s.done ? 'subtask-done' : ''}">${escapeHtml(s.title)}</span>
+            <button type="button" class="btn-close" style="font-size:.6rem" data-act="delete" aria-label="Delete subtask"></button>
+        </div>`).join('') || '<div class="text-muted small">No subtasks</div>';
+}
+
+// Re-render the modal's subtask list + status select after a subtask op
+// (loadTasks has already refreshed `tasks`).
+function refreshModalAfterSubtaskOp() {
+    const taskId = parseInt(document.getElementById('editTaskId').value);
+    renderModalSubtasks(taskId);
+    const task = tasks.find(t => t.id === taskId);
+    if (task) document.getElementById('editStatus').value = task.status || 'todo';
+}
+
+function wireModalSubtasks() {
+    const list = document.getElementById('editSubtasksList');
+
+    list.addEventListener('click', async (e) => {
+        const row = e.target.closest('[data-subtask-id]');
+        if (!row) return;
+        const subtaskId = parseInt(row.dataset.subtaskId);
+        if (e.target.dataset.act === 'toggle') {
+            await setSubtaskDone(subtaskId, e.target.checked);
+            refreshModalAfterSubtaskOp();
+        } else if (e.target.dataset.act === 'delete') {
+            await deleteSubtask(subtaskId);
+            refreshModalAfterSubtaskOp();
+        }
+    });
+
+    // + Add subtask: one inline input row; Enter adds as-is (no AI), Esc cancels.
+    document.getElementById('addSubtaskBtn').addEventListener('click', () => {
+        const container = document.getElementById('editSubtaskNew');
+        if (container.querySelector('input')) { container.querySelector('input').focus(); return; }
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'form-control form-control-sm';
+        input.placeholder = 'New subtask…';
+        container.appendChild(input);
+        input.focus();
+        let closed = false;
+        const close = () => { if (!closed) { closed = true; input.remove(); } };
+        input.addEventListener('keydown', async (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const title = input.value.trim();
+                if (!title) { close(); return; }
+                const taskId = parseInt(document.getElementById('editTaskId').value);
+                if (await addSubtaskToTask(taskId, title)) {
+                    input.value = '';
+                    refreshModalAfterSubtaskOp();
+                    input.focus(); // keep adding without re-clicking +
+                }
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                close();
+            }
+        });
+        input.addEventListener('blur', close);
+    });
 }
 
 // Save task
@@ -1714,7 +1940,7 @@ function renderOverviewDone() {
     }
     list.innerHTML = done.map(task => `
         <div class="task-item completed" data-task-id="${task.id}">
-            <div class="task-title">${escapeHtml(task.title)}</div>
+            <div class="task-title">${escapeHtml(task.title || '(untitled)')}</div>
             <div class="task-meta">
                 ${task.space ? `<span class="task-space"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(task.space)}</span>` : ''}
                 <span class="task-meta-item"><i class="fas fa-check"></i> ${formatFinishedAgo(task.completed_at || task.updated_at)}</span>
@@ -1951,7 +2177,7 @@ function renderSpaceTasks(spaceTasks) {
                  data-task-id="${task.id}">
                 <div class="space-task-content">
                     <div class="space-task-title">
-                        ${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title)}
+                        ${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title || '(untitled)')}
                     </div>
                     <div class="space-task-meta">
                         ${task.estimated_duration ?
