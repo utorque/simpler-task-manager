@@ -32,7 +32,7 @@ def record_change(action, entity_type, entity_id, old=None, new=None, actor=None
     `old` / `new` are plain dicts (usually `entity.to_dict()`), serialized
     here. `actor` records who drove the mutation: 'user' for direct UI/API
     edits, 'ai' for AI-created entities (parse, email-to-task), 'agent' for
-    bearer-token mutations (Hermes via the MCP sidecar). When the caller does
+    bearer-token mutations (the assistant via the MCP sidecar). When the caller does
     not pass one, the auth layer's `g.actor` wins (set on bearer auth),
     falling back to 'user'.
     """

@@ -15,7 +15,7 @@ One page, one header, four destinations:
 
 A **global quick-capture input in the header** turns pasted text (emails, thoughts, meeting notes) into structured tasks via an LLM from anywhere in the app.
 
-Optionally (PRD 002), a **Hermes destination** (6th tab, shortcut `6`) embeds a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) chat with a [Hermes Agent](https://github.com/NousResearch/hermes-agent) in an iframe (`HERMES_WEBUI_URL`; tab hidden when unset), and the `mcp_server/` sidecar exposes the whole domain to that agent as MCP tools.
+An **Assistant destination** (6th tab, shortcut `6`) embeds a first-party [Chainlit](https://chainlit.io) chat app (`chat/`, mounted same-origin at `/assistant` by `asgi.py`): persistent chat history, model picker, slash commands that inject tasks/notes into the context, a space-filter subheader, per-space AI guidance injection, file uploads, web search, skills, and an agentic tool loop pre-wired to the `mcp_server/` sidecar (audited workspace tools) and to the `sandbox/` execution sidecar (isolated code execution over a shared file workspace, produced files returned to the user). Setup: `doc/setup-assistant.md`.
 
 **Primary Use**: Self-hosted personal task management
 **Target Users**: Individuals with ADHD who need simple, fast organization with minimal context switching
@@ -61,8 +61,7 @@ simpler-smart-calendar/
 │   │   ├── notes.py           # /api/notes* (CRUD, cleanify, promote-to-task)
 │   │   ├── mailboxes.py       # /api/mailboxes* (CRUD, messages, add-task)
 │   │   ├── calendar_sources.py# /api/calendar-sources*, /api/external-events
-│   │   ├── schedule.py        # /api/schedule, /api/logs
-│   │   └── hermes_proxy.py    # /hermes-ui/* same-origin streaming proxy → hermes-webui container
+│   │   └── schedule.py        # /api/schedule, /api/logs
 │   ├── auth.py                # login_required decorator
 │   ├── audit.py               # record_change() — single-transaction ChangeLog seam
 │   ├── datetime_utils.py      # parse_iso_datetime
@@ -244,7 +243,7 @@ One page, one header:
 | Shortcut | Action |
 |---|---|
 | `1` / `2` / `3` / `4` / `5` | Switch to Tasks / Notes / Mail / Calendar / Spaces |
-| `6` | Switch to Hermes (agent chat; only when `HERMES_WEBUI_URL` is configured) |
+| `6` | Switch to Assistant (AI chat; only when the Chainlit app is mounted, i.e. the `asgi.py` entrypoint) |
 | `/` | Focus the quick-capture input |
 | `Ctrl+Enter` | Save from wherever you're typing (open modal's primary action, notes autosave flush, space editor save; capture inputs create the task) |
 | `S` | Auto-schedule all |
@@ -282,9 +281,11 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 | AI_API_BASE_URL | No | `https://api.openai.com/v1/` | Any OpenAI-compatible endpoint, or `api.anthropic.com` |
 | AI_MODEL | No | `gpt-3.5-turbo` | Model name |
 | APP_PASSWORD | Yes | "admin" | Single shared password |
-| API_TOKEN | No | None | Bearer token for machine clients (MCP sidecar); unset = bearer auth off |
-| HERMES_WEBUI_INTERNAL_URL | No | None | Compose-internal hermes-webui URL; when set the app proxies it same-origin at `/hermes-ui/` (login-gated, X-Frame-Options stripped) and the Hermes tab embeds that. Set by docker-compose |
-| HERMES_WEBUI_URL | No | None | Alternative: directly reachable webui URL to iframe (sibling subdomain + frame-ancestors); ignored when the internal URL is set. Both unset = tab hidden |
+| API_TOKEN | No | None | Bearer token for machine clients (MCP sidecar + embedded assistant); unset = bearer auth off and the assistant loses workspace access |
+| CHAT_MODELS | No | AI_MODEL | Comma-separated model ids offered in the assistant's model picker (first = default) |
+| SIMPLER_MCP_URL | No | None | Simpler's MCP sidecar, pre-integrated as assistant tools (compose sets `http://mcp:8765/mcp`) |
+| SANDBOX_MCP_URL | No | None | Execution-sandbox MCP sidecar (compose sets `http://sandbox:8766/mcp`) |
+| CHAT_FILES_DIR | No | instance/assistant_files | Assistant file workspace (compose points it at the volume shared with the sandbox) |
 | SECRET_KEY | Yes | dev fallback | Flask session secret **and** the key mailbox passwords are encrypted with — rotating it forces re-entering mailbox passwords |
 | FLASK_ENV | No | development | |
 
@@ -318,11 +319,19 @@ docker-compose up -d        # port 53000, ./instance holds tasks.db
 
 Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remember: it also encrypts mailbox passwords), use a WSGI server, HTTPS, and back up `instance/tasks.db`.
 
-**Hermes agent integration (optional, fully containerized)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `hermes-webui` (chat UI + Hermes Agent, auto-installed into `./hermes-home` on first start, no host port). The app reverse-proxies the webui same-origin at `/hermes-ui/` behind the normal login and embeds it as the Hermes tab — no reverse-proxy/DNS changes needed. Set `API_TOKEN` (`openssl rand -hex 32`) and seed `./hermes-home/` — **step-by-step walkthrough: `doc/setup-hermes-integration.md`**. Full architecture, rollout phases, and security analysis (incl. mail prompt-injection guardrails): `.opencode/plans/002_PRD_hermes-agent-integration.md`.
+**Embedded assistant (built in)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `sandbox` (the assistant's isolated execution sidecar, internal network + shared `/workspace` volume). The Chainlit assistant itself runs inside the `web` container (`asgi.py` mounts it same-origin at `/assistant`), gated by the normal login via a session-cookie auth bridge. Set `API_TOKEN` (`openssl rand -hex 32`) to give it workspace access — **walkthrough: `doc/setup-assistant.md`**.
 
 ## Version History
 
-**2026-07 — Hermes agent integration (PRD 002)**:
+**2026-07 — Embedded Chainlit assistant (replaces the Hermes integration)**:
+- ✅ First-party Chainlit app (`chat/`) mounted same-origin at `/assistant` by the new `asgi.py` entrypoint (FastAPI umbrella: Chainlit ASGI + Flask via a2wsgi); Hermes webui container + `/hermes-ui/` proxy removed
+- ✅ One login: Chainlit header-auth validates the Flask session cookie by signature (`chat/auth_bridge.py`); chat history persists in `instance/chainlit.db` (SQLAlchemy data layer, SQLite)
+- ✅ Model picker (chat profiles from `CHAT_MODELS`), streaming provider adapter for OpenAI-compatible + Anthropic endpoints incl. tool calls (`chat/providers.py`)
+- ✅ Workspace integration: starters from tasks in Doing, `/task` `/note` `/tasks` `/notes` `/skill` slash commands injecting entities as persisted context (a task always brings its linked note), space-filter subheader synced into the chat session, per-space guidance in the system prompt
+- ✅ Agentic tool loop (`chat/agent.py` + `chat/toolbox.py`): pre-integrated MCP servers (`mcp_server` sidecar + `sandbox` sidecar), user-added MCP servers via Chainlit's UI, native web_search/fetch_url, skills (`chat/skills/`), file uploads in / produced files back out
+- ✅ `sandbox/` sidecar: FastMCP execution sandbox (run_python/run_shell/file tools) in its own container, internal-only network, shared `/workspace` volume; CI publishes `-sandbox` image; local E2E harness in `scripts/e2e/`
+
+**2026-07 — Hermes agent integration (PRD 002, since replaced — see above)**:
 - ✅ `API_TOKEN` bearer auth mode in `auth.py` (constant-time compare; off when unset) + `actor='agent'` ChangeLog attribution via `g.actor` default in `audit.record_change()`
 - ✅ `mcp_server/` FastMCP sidecar (streamable HTTP :8765) — ~26 typed tools wrapping the REST API (tasks/subtasks/spaces/notes/schedule/freeze/changelog/mail-read/email-to-task drafts), compose service `mcp`
 - ✅ Hermes destination: optional 6th tab (shortcut `6`, `#hermes`) embedding hermes-webui via lazy iframe; hidden when unconfigured; help modal updated

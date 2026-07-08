@@ -72,9 +72,19 @@ def load_task_selection_prompt():
     except FileNotFoundError:
         return _TASK_SELECTION_PROMPT_DEFAULT
 
+# Repo-root instance/ dir, shared with the assistant's chat history DB and
+# matching migrate_db.py's default. Pinned explicitly because Flask's
+# implicit instance path resolves to src/instance/ (app.root_path-relative),
+# which is NOT the ./instance volume the compose files persist — prod data
+# would silently live inside the container.
+_INSTANCE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance')
+os.makedirs(_INSTANCE_DIR, exist_ok=True)
+
+
 class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///tasks.db'
+    SQLALCHEMY_DATABASE_URI = f"sqlite:///{os.path.join(_INSTANCE_DIR, 'tasks.db')}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     # New generic AI configuration
     AI_API_KEY = os.getenv('AI_API_KEY')
