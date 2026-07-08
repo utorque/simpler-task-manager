@@ -29,3 +29,25 @@ def test_panel_markup_absent_without_assistant(client, app):
     page = client.get('/').get_data(as_text=True)
     assert 'assistantSettingsModal' not in page
     assert 'assistant_settings.js' not in page
+
+
+# ===== Issue 003.09: workspace drawer shell wiring ============================
+
+def test_workspace_drawer_markup_present(client, app):
+    app.config['ASSISTANT_URL'] = '/assistant/'
+    login(client)
+    page = client.get('/').get_data(as_text=True)
+    assert 'id="workspaceDrawer"' in page
+    assert 'id="workspaceDrawerBtn"' in page
+    assert '/static/js/workspace.js' in page
+    assert 'class="assistant-body"' in page
+    # Shortcut documented in the help modal.
+    assert 'Toggle the workspace files drawer' in page
+
+
+def test_workspace_drawer_absent_without_assistant(client, app):
+    app.config['ASSISTANT_URL'] = None
+    login(client)
+    page = client.get('/').get_data(as_text=True)
+    assert 'workspaceDrawer' not in page
+    assert 'workspace.js' not in page

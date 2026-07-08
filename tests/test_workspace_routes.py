@@ -216,3 +216,44 @@ def test_auth_required(client, workspace_root):
     response = client.post('/api/workspace/upload', data={'root': 'workspace'},
                            content_type='multipart/form-data')
     assert response.status_code == 401
+
+
+# ===== Issue 003.09: WorkspaceView contract ===================================
+
+def test_tree_endpoint_shape_matches_view_contract(wclient, workspace_root):
+    """workspace.js renders exactly these fields; files carry the download
+    url, dirs don't."""
+    (workspace_root / 'docs').mkdir()
+    (workspace_root / 'a.txt').write_text('x')
+    payload = wclient.get('/api/workspace/tree?root=workspace').get_json()
+    assert set(payload.keys()) == {'root', 'path', 'entries'}
+    for entry in payload['entries']:
+        expected = {'name', 'type', 'size', 'mtime'}
+        if entry['type'] == 'file':
+            expected.add('url')
+        assert set(entry.keys()) == expected
+    # Dirs sort before files.
+    assert [e['name'] for e in payload['entries']] == ['docs', 'a.txt']
+
+
+def test_invalid_chars_in_path_rejected_server_side(wclient):
+    for bad in ('a\0b.txt', '..', 'x/../../y', '\\evil', 'a\\b'):
+        response = wclient.put('/api/workspace/file',
+                               json={'root': 'workspace', 'path': bad,
+                                     'content': 'x'})
+        assert response.status_code == 400, bad
+        response = wclient.post('/api/workspace/mkdir',
+                                json={'root': 'workspace', 'path': bad})
+        assert response.status_code == 400, bad
+
+
+def test_inline_md_edit_roundtrip(wclient, workspace_root):
+    """PUT then GET returns the exact bytes (no encoding drift) — the
+    autosave-on-blur cycle of the inline editor."""
+    content = '# Héllo\n\n- ünicode & <html> “quotes”\n\n```py\nx = 1\n```\n'
+    assert wclient.put('/api/workspace/file',
+                       json={'root': 'workspace', 'path': 'notes/inline.md',
+                             'content': content}).status_code == 200
+    response = wclient.get('/api/workspace/files/workspace/notes/inline.md')
+    assert response.status_code == 200
+    assert response.data.decode('utf-8') == content

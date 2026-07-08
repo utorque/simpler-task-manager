@@ -355,13 +355,23 @@
                  injected space guidance). -->
             <div class="assistant-toolbar">
                 <div class="space-chips" id="assistantSpaceChips"></div>
-                <button class="btn btn-sm btn-outline-secondary ms-auto" id="assistantSettingsBtn"
+                <button class="btn btn-sm btn-outline-secondary ms-auto" id="workspaceDrawerBtn"
+                        title="Workspace files — press W">
+                    <i class="fas fa-folder-open"></i> Files
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="assistantSettingsBtn"
                         title="Assistant settings — press ,">
                     <i class="fas fa-sliders-h"></i> Settings
                 </button>
             </div>
-            <iframe id="assistantFrame" data-src="{{ assistant_url }}"
-                    title="Simpler assistant chat" allow="clipboard-write"></iframe>
+            <!-- Chat iframe + the persistent workspace drawer (issue 003.09,
+                 populated by workspace.js on first toggle) side by side. -->
+            <div class="assistant-body">
+                <iframe id="assistantFrame" data-src="{{ assistant_url }}"
+                        title="Simpler assistant chat" allow="clipboard-write"></iframe>
+                <aside id="workspaceDrawer" class="workspace-drawer d-none"
+                       aria-label="Workspace files"></aside>
+            </div>
         </section>
         {% endif %}
     </main>
@@ -687,6 +697,7 @@
                             {% if assistant_url %}
                             <tr><td><kbd>6</kbd></td><td>Switch to Assistant (AI chat)</td></tr>
                             <tr><td><kbd>,</kbd> (in Assistant)</td><td>Open the Assistant settings (models, reasoning, skills, prompt)</td></tr>
+                            <tr><td><kbd>W</kbd> (in Assistant)</td><td>Toggle the workspace files drawer (browse, upload, edit the assistant's files)</td></tr>
                             {% endif %}
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
                             <tr><td><kbd>Enter</kbd></td><td>Create task with AI (header or board quick-add input)</td></tr>
@@ -759,6 +770,7 @@
     <script src="/static/js/spaces.js"></script>
     {% if assistant_url %}
     <script src="/static/js/assistant_settings.js"></script>
+    <script src="/static/js/workspace.js"></script>
     {% endif %}
     <script src="/static/js/app.js"></script>
 </body>
