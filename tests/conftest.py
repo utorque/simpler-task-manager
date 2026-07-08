@@ -48,6 +48,10 @@ config.Config.SQLALCHEMY_ENGINE_OPTIONS = {"poolclass": StaticPool}
 os.environ.setdefault("AI_API_KEY", "stub-key-not-used-in-tests")
 os.environ.setdefault("APP_PASSWORD", "test-password")
 os.environ.setdefault("SECRET_KEY", "test-secret")
+# Keep Chainlit's runtime artifacts (config/translations) under chat/ —
+# importing `chainlit` with no CHAINLIT_APP_ROOT would scaffold a stray
+# .chainlit/ in whatever cwd pytest runs from.
+os.environ.setdefault("CHAINLIT_APP_ROOT", os.path.join(ROOT, "chat"))
 
 # Import the Flask app under an ALIASED name (`flask_app`). The pytest fixture
 # below is named `app` (the pytest-flask convention); if we imported `app` here

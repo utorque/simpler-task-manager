@@ -97,12 +97,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Load initial data
     await Promise.all([loadTasks(), loadSpaces()]);
 
-    // Destination: deep link (#tasks/#notes/#mail/#calendar/#spaces/#hermes) > last used > Tasks.
-    // Hermes only exists when HERMES_WEBUI_URL is configured (tab + view are
+    // Destination: deep link (#tasks/#notes/#mail/#calendar/#spaces/#assistant) > last used > Tasks.
+    // Assistant only exists when the Chainlit app is mounted (tab + view are
     // server-side conditional) — an unavailable remembered/hashed destination
     // falls back to Tasks.
     const destinations = ['tasks', 'notes', 'mail', 'calendar', 'spaces'];
-    if (document.getElementById('view-hermes')) destinations.push('hermes');
+    if (document.getElementById('view-assistant')) destinations.push('assistant');
     const fromHash = window.location.hash.replace('#', '');
     let initial = destinations.includes(fromHash)
         ? fromHash
@@ -198,7 +198,8 @@ function switchDestination(destination) {
 
     document.querySelectorAll('.app-view').forEach(v => v.style.display = 'none');
     const view = document.getElementById(`view-${destination}`);
-    if (view) view.style.display = 'block';
+    // The assistant view is a column flexbox (toolbar above the iframe).
+    if (view) view.style.display = destination === 'assistant' ? 'flex' : 'block';
 
     document.querySelectorAll('#appNav .nav-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.destination === destination);
@@ -223,9 +224,9 @@ function switchDestination(destination) {
     if (destination === 'spaces' && window.SpacesView) {
         window.SpacesView.enter();
     }
-    if (destination === 'hermes') {
-        // Lazy-load the embedded hermes-webui on first visit only.
-        const frame = document.getElementById('hermesFrame');
+    if (destination === 'assistant') {
+        // Lazy-load the embedded assistant on first visit only.
+        const frame = document.getElementById('assistantFrame');
         if (frame && !frame.src) frame.src = frame.dataset.src;
     }
 }
@@ -300,7 +301,7 @@ function initKeyboardShortcuts() {
             case '4': switchDestination('calendar'); break;
             case '5': switchDestination('spaces'); break;
             case '6':
-                if (document.getElementById('view-hermes')) switchDestination('hermes');
+                if (document.getElementById('view-assistant')) switchDestination('assistant');
                 break;
             case '/':
                 e.preventDefault();

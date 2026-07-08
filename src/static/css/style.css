@@ -767,17 +767,20 @@ body {
     padding: 16px 20px;
 }
 
-/* Hermes destination: the embedded chat iframe owns the whole area under
-   the header (no shell padding/scrollbar — the webui scrolls itself). */
-.app-view-hermes {
+/* Assistant destination: the embedded chat iframe owns the whole area under
+   the header (no shell padding/scrollbar — the chat UI scrolls itself). */
+.app-view-assistant {
     padding: 0;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
-.app-view-hermes iframe {
+.app-view-assistant iframe {
     display: block;
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     border: 0;
 }
 

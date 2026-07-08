@@ -11,7 +11,9 @@ env/
 *.log
 .venv/
 cookies.txt
-# Hermes agent state + workspace (bind-mounted into the hermes-webui
-# container; holds API keys, memory, sessions — never commit)
-hermes-home/
-hermes-workspace/
+# Chainlit runtime artifacts (session file uploads, auto-generated locale
+# files). chat/.chainlit/config.toml IS tracked — only runtime output is not.
+chat/.files/
+chat/.chainlit/translations/
+# stray scaffold if chainlit is ever imported without CHAINLIT_APP_ROOT
+/.chainlit/
