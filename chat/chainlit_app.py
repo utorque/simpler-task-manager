@@ -132,15 +132,17 @@ async def on_mcp_disconnect(name: str, session):
     cl.user_session.set('mcp_sessions', sessions)
 
 
-def add_native_tools(toolbox: Toolbox):
+def add_native_tools(toolbox: Toolbox, attach_queue: list | None = None):
     if settings.web_tools_enabled():
         web_tools.register(toolbox)
     skills.register(toolbox)
+    files.register(toolbox, settings.files_dir(),
+                   attach_queue if attach_queue is not None else [])
     if not settings.sandbox_mcp_url() and settings.local_sandbox_enabled():
         sandbox_tools.register(toolbox, settings.files_dir())
 
 
-async def build_toolbox() -> Toolbox:
+async def build_toolbox(attach_queue: list | None = None) -> Toolbox:
     toolbox = Toolbox()
     for server in preintegrated_servers():
         try:
@@ -156,7 +158,7 @@ async def build_toolbox() -> Toolbox:
         mcp_sessions = {}
     for name, entry in mcp_sessions.items():
         toolbox.add_mcp_session(name, entry['session'], entry['specs'])
-    add_native_tools(toolbox)
+    add_native_tools(toolbox, attach_queue)
     return toolbox
 
 
@@ -392,11 +394,11 @@ async def on_message(message: cl.Message):
                              author='Workspace context').send()
 
     history = cl.chat_context.to_openai()
-    toolbox = await build_toolbox()
-
-    # Snapshot AFTER upload ingestion: only files the AGENT produces or
-    # modifies during this turn are sent back, not the user's own uploads.
-    workspace_before = files.snapshot_dir(settings.files_dir())
+    # Files the model explicitly delivers via attach_file_to_answer collect
+    # here and are flushed as download chips after the turn (issue 003.10 —
+    # scratch files are no longer auto-surfaced).
+    attachments: list[str] = []
+    toolbox = await build_toolbox(attachments)
 
     message_modes = getattr(message, 'modes', None)
     model = modes.current_model_from_modes(
@@ -416,12 +418,10 @@ async def on_message(message: cl.Message):
         await cl.Message(content=f'❌ Provider error: {e}').send()
         return
 
-    # File round-trip: anything new in the shared workspace goes back to the
-    # user as downloadable attachments.
-    produced = files.new_files_since(settings.files_dir(), workspace_before)
-    if produced:
+    if attachments:
         await cl.Message(
-            content='📁 Files from this turn:',
+            content='📁 Attached: ' + ', '.join(os.path.basename(path)
+                                                for path in attachments),
             elements=[cl.File(name=os.path.basename(path), path=path)
-                      for path in produced],
+                      for path in attachments],
         ).send()

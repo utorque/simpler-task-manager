@@ -20,6 +20,7 @@ from flask import Blueprint, jsonify, request, send_file
 from auth import login_required
 
 from chat import assistant_settings
+from chat import files as chat_files
 from chat import settings as chat_settings
 
 workspace_bp = Blueprint('workspace', __name__)
@@ -38,19 +39,20 @@ TEXT_MIMES = {'.md': 'text/markdown', '.txt': 'text/plain'}
 
 def resolve_in_root(root: str, relpath: str):
     """(root_dir, full_path) with both canonicalized, or None when the root
-    is not allowlisted or the path escapes it (traversal, absolute path,
-    null byte, out-of-root symlink)."""
+    is not allowlisted or the path escapes it. The traversal check itself
+    (realpath + prefix, null-byte/backslash rejection) is the shared
+    `chat.files.resolve_under` — one gate for this blueprint and the
+    attach_file_to_answer tool."""
     factory = ROOTS.get(root or '')
     if factory is None:
         return None
     relpath = relpath or ''
-    # Backslashes are legal Linux filename chars but path separators on
-    # Windows clients — reject outright (defense in depth).
-    if '\0' in relpath or '\\' in relpath or relpath.startswith('/'):
+    if relpath.startswith('/'):  # API paths are root-relative, never absolute
         return None
     root_dir = os.path.realpath(factory())
-    full = os.path.realpath(os.path.join(root_dir, relpath))
-    if full != root_dir and not full.startswith(root_dir + os.sep):
+    full = chat_files.resolve_under(root_dir, relpath) \
+        if relpath else root_dir
+    if full is None:
         return None
     return root_dir, full
 
