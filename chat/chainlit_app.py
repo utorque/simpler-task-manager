@@ -67,9 +67,13 @@ def data_layer():
 def build_chat_modes() -> list[cl.Mode]:
     model_options = modes.build_model_mode_options(
         assistant_settings.available_models())
+    reasoning_options = modes.build_reasoning_mode_options(
+        assistant_settings.available_reasoning_levels())
     return [
         cl.Mode(id=modes.MODEL_MODE_ID, name='Model',
                 options=[cl.ModeOption(**opt) for opt in model_options]),
+        cl.Mode(id=modes.REASONING_MODE_ID, name='Reasoning',
+                options=[cl.ModeOption(**opt) for opt in reasoning_options]),
     ]
 
 
@@ -77,11 +81,12 @@ async def publish_modes():
     await cl.context.emitter.set_modes(build_chat_modes())
 
 
-def get_llm() -> LLMClient:
+def get_llm(reasoning_effort: str | None = None) -> LLMClient:
     return LLMClient(
         api_key=settings.ai_api_key(),
         base_url=settings.ai_base_url(),
         max_tokens=settings.max_tokens(),
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -339,12 +344,13 @@ async def on_message(message: cl.Message):
     # modifies during this turn are sent back, not the user's own uploads.
     workspace_before = files.snapshot_dir(settings.files_dir())
 
+    message_modes = getattr(message, 'modes', None)
     model = modes.current_model_from_modes(
-        getattr(message, 'modes', None),
-        default=assistant_settings.available_models()[0])
+        message_modes, default=assistant_settings.available_models()[0])
+    reasoning = modes.current_reasoning_from_modes(message_modes, 'medium')
     try:
         await run_agent(
-            llm=get_llm(),
+            llm=get_llm(reasoning_effort=reasoning),
             model=model,
             system=await build_system_prompt(toolbox),
             history=history,

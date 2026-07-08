@@ -30,3 +30,30 @@ def current_model_from_modes(modes: dict | None, default: str) -> str:
     if not modes:
         return default
     return modes.get(MODEL_MODE_ID) or default
+
+
+REASONING_MODE_ID = 'reasoning'
+
+
+def build_reasoning_mode_options(levels: list[str]) -> list[dict]:
+    """One ModeOption-shaped dict per reasoning level; 'medium' is the
+    default when present, else the first level."""
+    default_id = 'medium' if 'medium' in levels else (levels[0] if levels else None)
+    return [
+        {
+            'id': level,
+            'name': level.capitalize(),
+            'description': f'{level.capitalize()} reasoning effort '
+                           '(ignored by models without the parameter).',
+            'icon': 'brain',
+            'default': level == default_id,
+        }
+        for level in levels
+    ]
+
+
+def current_reasoning_from_modes(modes: dict | None, default: str) -> str:
+    """The reasoning level selected for this message, else the default."""
+    if not modes:
+        return default
+    return modes.get(REASONING_MODE_ID) or default

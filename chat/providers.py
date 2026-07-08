@@ -57,6 +57,31 @@ def provider_kind(base_url: str) -> str:
     return 'anthropic' if 'anthropic' in (base_url or '').lower() else 'openai'
 
 
+# Anthropic maps reasoning levels to extended-thinking token budgets
+# (tunable constants); OpenAI takes the level string as-is.
+REASONING_BUDGETS = {'low': 2048, 'medium': 8192, 'high': 16384}
+
+
+def apply_reasoning_effort(request_params: dict, level: str | None, kind: str):
+    """Mutate the provider request params to carry the reasoning effort.
+
+    - openai: `reasoning_effort=<level>` (endpoints that reject the param
+      surface an error the chat layer catches — documented behavior).
+    - anthropic: `thinking={'type': 'enabled', 'budget_tokens': N}` from
+      REASONING_BUDGETS; a level with no mapped budget is skipped.
+    - None or 'none': graceful no-op.
+    """
+    if not level or level == 'none':
+        return
+    if kind == 'anthropic':
+        budget = REASONING_BUDGETS.get(level)
+        if budget:
+            request_params['thinking'] = {'type': 'enabled',
+                                          'budget_tokens': budget}
+    else:
+        request_params['reasoning_effort'] = level
+
+
 def _parse_arguments(raw) -> dict:
     if isinstance(raw, dict):
         return raw
@@ -68,10 +93,12 @@ def _parse_arguments(raw) -> dict:
 
 
 class LLMClient:
-    def __init__(self, api_key: str, base_url: str, max_tokens: int = 4096):
+    def __init__(self, api_key: str, base_url: str, max_tokens: int = 4096,
+                 reasoning_effort: str | None = None):
         self.api_key = api_key
         self.base_url = base_url
         self.max_tokens = max_tokens
+        self.reasoning_effort = reasoning_effort
         self.kind = provider_kind(base_url)
 
     async def stream_chat(self, model: str, system: str, messages: list[dict],
@@ -104,6 +131,7 @@ class LLMClient:
         kwargs = {}
         if tools:
             kwargs['tools'] = self._openai_tools(tools)
+        apply_reasoning_effort(kwargs, self.reasoning_effort, self.kind)
         stream = await client.chat.completions.create(
             model=model,
             messages=[{'role': 'system', 'content': system}] + messages,
@@ -209,12 +237,19 @@ class LLMClient:
         kwargs = {}
         if tools:
             kwargs['tools'] = self._anthropic_tools(tools)
+        apply_reasoning_effort(kwargs, self.reasoning_effort, self.kind)
+        # The API requires max_tokens > thinking.budget_tokens; leave
+        # headroom for the visible reply on top of the thinking budget.
+        max_tokens = self.max_tokens
+        if 'thinking' in kwargs:
+            max_tokens = max(max_tokens,
+                             kwargs['thinking']['budget_tokens'] + 2048)
         result = ChatResult()
         async with client.messages.stream(
             model=model,
             system=system,
             messages=self._anthropic_messages(messages),
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens,
             **kwargs,
         ) as stream:
             async for text in stream.text_stream:

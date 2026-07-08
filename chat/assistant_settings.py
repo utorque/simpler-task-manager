@@ -91,6 +91,35 @@ def available_models() -> list[str]:
     return read_models() or settings.chat_models()
 
 
+# ===== Reasoning levels (Bundle B) ============================================
+
+DEFAULT_REASONING_LEVELS = ['low', 'medium', 'high']
+
+
+def reasoning_json_path() -> str:
+    return os.path.join(instance_dir(), 'reasoning.json')
+
+
+def read_reasoning_levels() -> list[str]:
+    try:
+        with open(reasoning_json_path(), encoding='utf-8') as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(level).strip() for level in data if str(level).strip()]
+
+
+def write_reasoning_levels(levels: list[str]):
+    with open(reasoning_json_path(), 'w', encoding='utf-8') as f:
+        json.dump(list(levels), f, indent=2)
+
+
+def available_reasoning_levels() -> list[str]:
+    return read_reasoning_levels() or list(DEFAULT_REASONING_LEVELS)
+
+
 # ===== Skills dirs (Bundle B) =================================================
 
 def instance_skills_dir() -> str:
