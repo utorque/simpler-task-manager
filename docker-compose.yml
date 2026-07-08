@@ -13,10 +13,18 @@ services:
       # Pre-integrate the simpler-mcp sidecar as the assistant's workspace
       # tool server (agent mutations audited as actor='agent').
       SIMPLER_MCP_URL: http://mcp:8765/mcp
+      # Pre-integrate the execution sandbox + share its /workspace so
+      # uploads flow in and produced files flow back to the user.
+      SANDBOX_MCP_URL: http://sandbox:8766/mcp
+      CHAT_FILES_DIR: /workspace
     restart: unless-stopped
     volumes:
       - ./instance:/app/instance
       - ./src:/app/src
+      - assistant-workspace:/workspace
+    networks:
+      - default
+      - sandbox-net
 
   # simpler-mcp: MCP sidecar exposing the app's domain as agent tools.
   # Wraps the REST API with the API_TOKEN bearer credential; serves
@@ -36,3 +44,32 @@ services:
     depends_on:
       - web
     restart: unless-stopped
+
+  # simpler-sandbox: the assistant's isolated execution environment (MCP,
+  # streamable HTTP at :8766/mcp). It shares ONLY the /workspace volume with
+  # the web service: uploads land there, snippets run on them, produced
+  # files are returned to the user. Contained by construction: no app
+  # secrets, non-root user, capped resources, and it lives on an INTERNAL
+  # network — reachable by `web`, but with no internet egress. Add `default`
+  # to its networks if snippets legitimately need the internet.
+  sandbox:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    volumes:
+      - assistant-workspace:/workspace
+    mem_limit: 1g
+    pids_limit: 256
+    cpus: 1.0
+    restart: unless-stopped
+    networks:
+      - sandbox-net
+
+volumes:
+  # Shared assistant file workspace (web <-> sandbox).
+  assistant-workspace:
+
+networks:
+  # web <-> sandbox only; `internal` = no route to the outside world.
+  sandbox-net:
+    internal: true

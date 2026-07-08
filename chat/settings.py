@@ -104,6 +104,20 @@ def web_tools_enabled() -> bool:
     return os.getenv('CHAT_WEB_TOOLS', '1') != '0'
 
 
+def sandbox_mcp_url():
+    """URL of the dockerized sandbox MCP sidecar (compose wires
+    http://sandbox:8766/mcp). Unset -> no sandbox, unless the local
+    fallback below is explicitly enabled."""
+    return os.getenv('SANDBOX_MCP_URL') or None
+
+
+def local_sandbox_enabled() -> bool:
+    """CHAT_LOCAL_SANDBOX=1 runs the sandbox tools IN-PROCESS on files_dir()
+    (no container isolation — subprocesses run as the app user). Dev
+    convenience only; the dockerized sidecar is the real deal."""
+    return os.getenv('CHAT_LOCAL_SANDBOX', '0') == '1'
+
+
 def ensure_chainlit_env():
     """Set the env vars Chainlit needs, before `chainlit` is imported.
 

@@ -14,8 +14,9 @@
 #   `docker compose -f docker-compose.prod.yml pull && up -d` on POST.
 #
 # Image names follow the CI matrix in .github/workflows/docker-build.yml:
-#   web: ghcr.io/utorque/simpler-task-manager:latest
-#   mcp: ghcr.io/utorque/simpler-task-manager-mcp:latest
+#   web:     ghcr.io/utorque/simpler-task-manager:latest
+#   mcp:     ghcr.io/utorque/simpler-task-manager-mcp:latest
+#   sandbox: ghcr.io/utorque/simpler-task-manager-sandbox:latest
 
 services:
   # web: Flask + the embedded Chainlit assistant in one server (asgi.py).
@@ -32,9 +33,17 @@ services:
       # Pre-integrate the simpler-mcp sidecar as the assistant's workspace
       # tool server (agent mutations audited as actor='agent').
       SIMPLER_MCP_URL: http://mcp:8765/mcp
+      # Pre-integrate the execution sandbox + share its /workspace so
+      # uploads flow in and produced files flow back to the user.
+      SANDBOX_MCP_URL: http://sandbox:8766/mcp
+      CHAT_FILES_DIR: /workspace
     volumes:
       - ./instance:/app/instance
+      - assistant-workspace:/workspace
     restart: unless-stopped
+    networks:
+      - default
+      - sandbox-net
 
   # simpler-mcp: MCP sidecar exposing the app's domain as agent tools.
   # Wraps the REST API with the API_TOKEN bearer credential; serves
@@ -53,3 +62,27 @@ services:
     depends_on:
       - web
     restart: unless-stopped
+
+  # simpler-sandbox: the assistant's isolated execution environment (MCP at
+  # :8766/mcp). Shares ONLY the /workspace volume with web; internal network
+  # = no internet egress (add `default` to its networks to allow it).
+  sandbox:
+    image: ghcr.io/utorque/simpler-task-manager-sandbox:latest
+    pull_policy: always
+    volumes:
+      - assistant-workspace:/workspace
+    mem_limit: 1g
+    pids_limit: 256
+    cpus: 1.0
+    restart: unless-stopped
+    networks:
+      - sandbox-net
+
+volumes:
+  # Shared assistant file workspace (web <-> sandbox).
+  assistant-workspace:
+
+networks:
+  # web <-> sandbox only; `internal` = no route to the outside world.
+  sandbox-net:
+    internal: true

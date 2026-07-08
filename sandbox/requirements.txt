@@ -1,0 +1,11 @@
+# simpler-sandbox sidecar. The MCP server itself only needs `mcp`; the rest
+# is the batteries-included toolkit run_python snippets get to use. Trim or
+# extend freely — nothing outside this container depends on the list.
+mcp>=1.9.0
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.8
+openpyxl>=3.1
+pillow>=10.0
+pypdf>=4.0
+requests>=2.31

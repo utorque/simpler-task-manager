@@ -30,7 +30,7 @@ settings.ensure_chainlit_env()  # before anything imports chainlit
 
 import chainlit as cl  # noqa: E402
 
-from chat import commands, files, simpler_client, skills, web_tools, workspace  # noqa: E402
+from chat import commands, files, sandbox_tools, simpler_client, skills, web_tools, workspace  # noqa: E402
 from chat.agent import AgentHooks, run_agent  # noqa: E402
 from chat.auth_bridge import is_authenticated  # noqa: E402
 from chat.data_layer import build_data_layer  # noqa: E402
@@ -113,6 +113,8 @@ def preintegrated_servers() -> list[MCPToolServer]:
         servers = []
         if settings.simpler_mcp_url():
             servers.append(MCPToolServer('simpler', settings.simpler_mcp_url()))
+        if settings.sandbox_mcp_url():
+            servers.append(MCPToolServer('sandbox', settings.sandbox_mcp_url()))
         for name, url in settings.extra_mcp_servers().items():
             servers.append(MCPToolServer(name, url))
         _preintegrated_servers = servers
@@ -144,6 +146,8 @@ def add_native_tools(toolbox: Toolbox):
     if settings.web_tools_enabled():
         web_tools.register(toolbox)
     skills.register(toolbox)
+    if not settings.sandbox_mcp_url() and settings.local_sandbox_enabled():
+        sandbox_tools.register(toolbox, settings.files_dir())
 
 
 async def build_toolbox() -> Toolbox:
@@ -302,6 +306,10 @@ async def on_message(message: cl.Message):
     history = cl.chat_context.to_openai()
     toolbox = await build_toolbox()
 
+    # Snapshot AFTER upload ingestion: only files the AGENT produces or
+    # modifies during this turn are sent back, not the user's own uploads.
+    workspace_before = files.snapshot_dir(settings.files_dir())
+
     try:
         await run_agent(
             llm=get_llm(),
@@ -314,3 +322,14 @@ async def on_message(message: cl.Message):
         )
     except Exception as e:  # surface provider errors in-chat, don't crash the session
         await cl.Message(content=f'❌ Provider error: {e}').send()
+        return
+
+    # File round-trip: anything new in the shared workspace goes back to the
+    # user as downloadable attachments.
+    produced = files.new_files_since(settings.files_dir(), workspace_before)
+    if produced:
+        await cl.Message(
+            content='📁 Files from this turn:',
+            elements=[cl.File(name=os.path.basename(path), path=path)
+                      for path in produced],
+        ).send()

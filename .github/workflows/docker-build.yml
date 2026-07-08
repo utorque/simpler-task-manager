@@ -27,6 +27,13 @@ jobs:
           - target: mcp
             dockerfile: mcp_server/Dockerfile
             image_suffix: "-mcp"
+          # `sandbox` — the assistant's isolated execution sidecar
+          # (sandbox/). Published as `ghcr.io/<org>/<repo>-sandbox`.
+          # Reachable over the internal compose network at
+          # http://sandbox:8766/mcp; never exposed to the host.
+          - target: sandbox
+            dockerfile: sandbox/Dockerfile
+            image_suffix: "-sandbox"
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

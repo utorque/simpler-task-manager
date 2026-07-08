@@ -64,6 +64,36 @@ def ingest_file(name: str, path: str, mime: str | None, store_dir: str) -> str:
     return f'{header}\n\n```\n{text}\n```{truncated}'
 
 
+def snapshot_dir(root: str) -> dict[str, tuple[float, int]]:
+    """{relative path: (mtime, size)} for every visible file under root —
+    taken before an agent turn to detect what the turn produced."""
+    state = {}
+    if not os.path.isdir(root):
+        return state
+    for current, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        for name in names:
+            if name.startswith('.'):
+                continue
+            full = os.path.join(current, name)
+            try:
+                stat = os.stat(full)
+            except OSError:
+                continue
+            state[os.path.relpath(full, root)] = (stat.st_mtime, stat.st_size)
+    return state
+
+
+def new_files_since(root: str, before: dict[str, tuple[float, int]],
+                    limit: int = 10) -> list[str]:
+    """Absolute paths of files created or modified since `before`
+    (newest last), capped at `limit`."""
+    after = snapshot_dir(root)
+    changed = [rel for rel, sig in after.items() if before.get(rel) != sig]
+    changed.sort(key=lambda rel: after[rel][0])
+    return [os.path.join(root, rel) for rel in changed[-limit:]]
+
+
 def ingest_elements(elements, store_dir: str) -> str | None:
     """All file-bearing elements of a message -> one context block."""
     blocks = []
