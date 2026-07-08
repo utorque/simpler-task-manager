@@ -117,7 +117,6 @@ def test_build_starters_doing_tasks_first():
     doing = [{'id': 5, 'title': 'Ship the thing'}]
     starters = commands.build_starters(doing)
     assert starters[0]['command'] == 'task'
-    assert '#5' in starters[0]['message']
     assert 'Ship the thing' in starters[0]['label']
     # Generic starters follow.
     assert any(s['command'] is None for s in starters)
@@ -129,3 +128,43 @@ def test_build_starters_limits_and_works_empty():
     task_starters = [s for s in starters if s['command'] == 'task']
     assert len(task_starters) == 6
     assert commands.build_starters([])  # generic ones only, never empty
+
+
+# ===== Issue 003.01: emoji labels + prefill-not-send ==========================
+
+def _is_emoji(char: str) -> bool:
+    return ord(char) > 0x2000  # any pictograph/symbol, not ASCII
+
+
+def test_build_starters_emoji_in_label():
+    doing = [{'id': 5, 'title': 'Ship the thing'}]
+    for spec in commands.build_starters(doing):
+        assert _is_emoji(spec['label'][0]), spec['label']
+        assert not spec.get('icon')  # no icon-font dependency
+
+
+def test_task_starter_has_command_and_seed():
+    doing = [{'id': 12, 'title': 'Write report'}]
+    starters = commands.build_starters(doing)
+    task_starter = starters[0]
+    assert task_starter['command'] == 'task'
+    assert task_starter['prefill'] == '#12 — '
+    for generic in starters[1:]:
+        assert generic['command'] is None
+        assert generic['prefill']  # the full seed prompt, editable
+
+
+def test_starter_seed_not_in_message():
+    doing = [{'id': 12, 'title': 'Write report'}]
+    for spec in commands.build_starters(doing):
+        assert 'message' not in spec  # seed lives only in 'prefill'
+
+
+def test_starter_by_label_lookup():
+    doing = [{'id': 12, 'title': 'Write report'}]
+    starters = commands.build_starters(doing)
+    spec = commands.starter_by_label(starters[0]['label'], starters)
+    assert spec is starters[0]
+    # Whitespace-tolerant (DOM textContent may pad) + unknown -> None.
+    assert commands.starter_by_label(f"  {starters[0]['label']}  ", starters) is starters[0]
+    assert commands.starter_by_label('nope', starters) is None

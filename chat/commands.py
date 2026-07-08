@@ -136,11 +136,11 @@ async def handle_command(command: str, content: str,
 # ===== Starters ===============================================================
 
 GENERIC_STARTERS = [
-    ('What should I do now?',
+    ('✨ What should I do now?',
      'Looking at my open tasks, deadlines and priorities: what should I '
      'work on right now? Pick one thing and help me start it.',
      None),
-    ('Plan my day',
+    ('✨ Plan my day',
      'Help me plan today: go through what is on my plate and sketch a '
      'realistic order of attack.',
      None),
@@ -149,20 +149,31 @@ GENERIC_STARTERS = [
 
 def build_starters(doing_tasks: list[dict], limit: int = 6) -> list[dict]:
     """Starter specs (dicts, UI-agnostic → testable): one per task currently
-    in 'doing', then the generic ones. Clicking a task starter fires the
-    /task command with the task id, so the full task (+ linked note) lands
-    in the context."""
+    in 'doing', then the generic ones. Labels open with an emoji char (always
+    renders — no icon-font dependency, so no 'icon' field).
+
+    Clicking a starter does NOT auto-send a model message: the bridge
+    (chat/public/simpler-bridge.js) intercepts the click and the backend
+    prefills the composer with the editable 'prefill' seed. Task starters
+    additionally fire the /task command server-side so the full task
+    (+ linked note) lands in the context before the user sends."""
     starters = [
         {
             'label': f"▶ {task.get('title', '')}"[:60],
-            'message': f"#{task['id']} — let's work on this.",
+            'prefill': f"#{task['id']} — ",
             'command': 'task',
-            'icon': 'play',
         }
         for task in doing_tasks[:limit]
     ]
     starters += [
-        {'label': label, 'message': message, 'command': command, 'icon': 'sparkles'}
-        for label, message, command in GENERIC_STARTERS
+        {'label': label, 'prefill': prefill, 'command': command}
+        for label, prefill, command in GENERIC_STARTERS
     ]
     return starters
+
+
+def starter_by_label(label: str, starters: list[dict]):
+    """The starter spec whose label matches the clicked button's text
+    (whitespace-tolerant — the bridge reads DOM textContent), or None."""
+    needle = (label or '').strip()
+    return next((s for s in starters if s['label'].strip() == needle), None)

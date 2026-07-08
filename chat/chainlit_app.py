@@ -175,13 +175,17 @@ async def on_window_message(message):
         data = json.loads(message) if isinstance(message, str) else message
     except (json.JSONDecodeError, TypeError):
         return
-    if isinstance(data, dict) and data.get('type') == 'simpler-space-filter':
+    if not isinstance(data, dict):
+        return
+    if data.get('type') == 'simpler-space-filter':
         ids = data.get('space_ids')
         if isinstance(ids, list):
             ids = [int(i) for i in ids if isinstance(i, (int, str)) and str(i).isdigit()]
             cl.user_session.set('space_filter', ids or None)
         else:
             cl.user_session.set('space_filter', None)
+    elif data.get('type') == 'simpler-starter-click':
+        await on_starter_click(data.get('label') or '')
 
 
 def selected_space_ids() -> list[int] | None:
@@ -190,15 +194,43 @@ def selected_space_ids() -> list[int] | None:
 
 # ===== Starters (tasks in Doing) + composer commands ==========================
 
-@cl.set_starters
-async def starters():
+async def build_starter_specs() -> list[dict]:
     doing = []
     if simpler_client.configured():
         try:
             doing = await simpler_client.list_tasks(status='doing')
         except SimplerAPIError:
             doing = []
-    return [cl.Starter(**spec) for spec in commands.build_starters(doing)]
+    return commands.build_starters(doing)
+
+
+@cl.set_starters
+async def starters():
+    # message = the prefill seed: the bridge intercepts the click so it is
+    # never auto-sent — it only reaches the model if the bridge is absent
+    # (graceful degradation to the old fire-and-send behavior).
+    return [cl.Starter(label=spec['label'], message=spec['prefill'],
+                       command=spec.get('command'))
+            for spec in await build_starter_specs()]
+
+
+async def on_starter_click(label: str):
+    """Bridge-intercepted starter click: run the starter's command injection
+    (task starters land their /task context block in the thread), then hand
+    the editable seed back to the bridge to prefill the composer."""
+    spec = commands.starter_by_label(label, await build_starter_specs())
+    if spec is None:
+        return
+    if spec.get('command'):
+        block, error = await commands.handle_command(
+            spec['command'], spec['prefill'], selected_space_ids())
+        if error:
+            await cl.Message(content=error).send()
+        elif block:
+            await cl.Message(content=block, type='system_message',
+                             author='Workspace context').send()
+    await cl.send_window_message(
+        {'type': 'simpler-starter-prefill', 'prefill': spec['prefill']})
 
 
 async def register_commands():
