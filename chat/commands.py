@@ -95,7 +95,8 @@ async def _handle_skill(query: str, space_ids) -> str:
     available = skills.list_skills()
     if not query.strip():
         if not available:
-            return 'No skills are installed (chat/skills/).'
+            return ('No skills are installed (instance/assistant/skills/ '
+                    'or the bundled chat/skills/).')
         listing = '\n'.join(f"- **{s['name']}** — {s['description']}" for s in available)
         return ('The user used /skill without a name. Installed skills:\n'
                 f'{listing}\nAsk which one to load.')
