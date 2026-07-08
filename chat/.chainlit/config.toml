@@ -103,6 +103,9 @@ default_theme = "light"
 # Visual integration with the surrounding Simpler shell.
 custom_css = "/public/simpler.css"
 
+# Shell -> assistant bridge (space filter via localStorage + window messages).
+custom_js = "/public/simpler-bridge.js"
+
 # Force a specific language for all users (e.g., "en-US", "he-IL", "fr-FR")
 # If not set, the browser's language will be used
 # language = "en-US"

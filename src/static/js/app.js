@@ -228,6 +228,7 @@ function switchDestination(destination) {
         // Lazy-load the embedded assistant on first visit only.
         const frame = document.getElementById('assistantFrame');
         if (frame && !frame.src) frame.src = frame.dataset.src;
+        renderAssistantSpaceChips();
     }
 }
 
@@ -799,6 +800,65 @@ async function autoSelectDoing() {
         btn.disabled = false;
         input.disabled = false;
     }
+}
+
+// ===== Assistant space filter (subheader chips above the chat iframe) =====
+// Independent from the board filter. The selection lives in localStorage
+// ('assistantSpaceFilter': JSON array of space ids, or null = all); the
+// assistant iframe is same-origin and reads it via chat/public/simpler-bridge.js.
+
+function getAssistantSpaceFilter() {
+    try {
+        const raw = localStorage.getItem('assistantSpaceFilter');
+        const parsed = raw ? JSON.parse(raw) : null;
+        return Array.isArray(parsed) && parsed.length ? parsed : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function setAssistantSpaceFilter(filter) {
+    localStorage.setItem('assistantSpaceFilter', JSON.stringify(filter));
+}
+
+function renderAssistantSpaceChips() {
+    const container = document.getElementById('assistantSpaceChips');
+    if (!container) return;
+
+    const filter = getAssistantSpaceFilter();
+    const chip = (label, value, active) => `
+        <button class="space-chip ${active ? 'active' : ''}"
+                data-space-id="${value === null ? 'all' : value}">
+            ${label}
+        </button>`;
+
+    container.innerHTML =
+        chip('All spaces', null, filter === null) +
+        spaces.map(s => chip(escapeHtml(s.name), s.id,
+            filter !== null && filter.includes(s.id))).join('');
+
+    // Plain click = only that space; Ctrl+click = toggle it in/out of the
+    // selection (empty set falls back to all); "All spaces" resets.
+    container.querySelectorAll('.space-chip').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const v = btn.dataset.spaceId;
+            let filter = getAssistantSpaceFilter();
+            if (v === 'all') {
+                filter = null;
+            } else {
+                const id = parseInt(v);
+                if (e.ctrlKey || e.metaKey) {
+                    const set = new Set(filter || []);
+                    set.has(id) ? set.delete(id) : set.add(id);
+                    filter = set.size ? Array.from(set) : null;
+                } else {
+                    filter = [id];
+                }
+            }
+            setAssistantSpaceFilter(filter);
+            renderAssistantSpaceChips();
+        });
+    });
 }
 
 function renderSpaceChips() {

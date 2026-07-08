@@ -6,13 +6,17 @@ for the integrated app, or standalone for development:
     CHAINLIT_APP_ROOT=chat chainlit run chat/chainlit_app.py
 
 Responsibilities here are wiring only — auth bridging, history persistence,
-model picking, and streaming the provider reply. The reusable logic lives in
-the sibling modules (`auth_bridge`, `data_layer`, `providers`), which stay
-importable and testable without Chainlit's runtime.
+model picking, slash commands, starters, the space-filter bridge, and
+streaming the provider reply. The reusable logic lives in the sibling
+modules (`auth_bridge`, `data_layer`, `providers`, `simpler_client`,
+`workspace`, `commands`), which stay importable and testable without
+Chainlit's runtime.
 """
 
+import json
 import os
 import sys
+from datetime import datetime
 
 # Chainlit loads this file by path; make the repo root importable so the
 # `chat` package resolves regardless of who loaded us (asgi.py, chainlit CLI).
@@ -26,9 +30,11 @@ settings.ensure_chainlit_env()  # before anything imports chainlit
 
 import chainlit as cl  # noqa: E402
 
+from chat import commands, simpler_client, workspace  # noqa: E402
 from chat.auth_bridge import is_authenticated  # noqa: E402
 from chat.data_layer import build_data_layer  # noqa: E402
 from chat.providers import LLMClient  # noqa: E402
+from chat.simpler_client import SimplerAPIError  # noqa: E402
 
 SYSTEM_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'system.md')
 
@@ -91,10 +97,53 @@ def get_llm() -> LLMClient:
     )
 
 
+# ===== Space filter (shell subheader -> chat/public/simpler-bridge.js) =======
+
+@cl.on_window_message
+async def on_window_message(message):
+    """The shell's space chips land here as JSON strings (see
+    chat/public/simpler-bridge.js). Store the filter on the session; it
+    scopes /tasks & /notes and the space guidance in the system prompt."""
+    try:
+        data = json.loads(message) if isinstance(message, str) else message
+    except (json.JSONDecodeError, TypeError):
+        return
+    if isinstance(data, dict) and data.get('type') == 'simpler-space-filter':
+        ids = data.get('space_ids')
+        if isinstance(ids, list):
+            ids = [int(i) for i in ids if isinstance(i, (int, str)) and str(i).isdigit()]
+            cl.user_session.set('space_filter', ids or None)
+        else:
+            cl.user_session.set('space_filter', None)
+
+
+def selected_space_ids() -> list[int] | None:
+    return cl.user_session.get('space_filter')
+
+
+# ===== Starters (tasks in Doing) + composer commands ==========================
+
+@cl.set_starters
+async def starters():
+    doing = []
+    if simpler_client.configured():
+        try:
+            doing = await simpler_client.list_tasks(status='doing')
+        except SimplerAPIError:
+            doing = []
+    return [cl.Starter(**spec) for spec in commands.build_starters(doing)]
+
+
+async def register_commands():
+    if simpler_client.configured():
+        await cl.context.emitter.set_commands(commands.COMMANDS)
+
+
 # ===== Conversation ===========================================================
 
 @cl.on_chat_start
 async def on_chat_start():
+    await register_commands()
     if not settings.ai_api_key():
         await cl.Message(
             content='⚠️ No AI provider configured — set `AI_API_KEY` (and '
@@ -104,13 +153,40 @@ async def on_chat_start():
 
 @cl.on_chat_resume
 async def on_chat_resume(thread):
-    # Chainlit restores the message history into the chat context itself;
-    # nothing to rebuild here.
-    pass
+    # Chainlit restores the message history into the chat context itself.
+    await register_commands()
+
+
+async def build_system_prompt() -> str:
+    parts = [SYSTEM_PROMPT,
+             f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M')} "
+             f"({datetime.now().strftime('%A')})."]
+    if simpler_client.configured():
+        try:
+            spaces = await simpler_client.list_spaces()
+            parts.append(workspace.format_spaces_guidance(spaces, selected_space_ids()))
+        except SimplerAPIError as e:
+            parts.append(f'(Workspace API unavailable right now: {e})')
+    else:
+        parts.append('(Workspace access is not configured: API_TOKEN unset — '
+                     'you cannot see tasks/notes/spaces.)')
+    return '\n\n'.join(parts)
 
 
 @cl.on_message
 async def on_message(message: cl.Message):
+    # Slash commands inject workspace context as a persisted system message
+    # BEFORE the model answers, so it is part of the thread from here on.
+    if message.command:
+        block, error = await commands.handle_command(
+            message.command, message.content, selected_space_ids())
+        if error:
+            await cl.Message(content=error).send()
+            return
+        if block:
+            await cl.Message(content=block, type='system_message',
+                             author='Workspace context').send()
+
     history = cl.chat_context.to_openai()
     reply = cl.Message(content='')
 
@@ -120,7 +196,7 @@ async def on_message(message: cl.Message):
     try:
         await get_llm().stream_chat(
             model=current_model(),
-            system=SYSTEM_PROMPT,
+            system=await build_system_prompt(),
             messages=history,
             on_text=on_text,
         )

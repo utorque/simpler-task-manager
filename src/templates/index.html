@@ -348,6 +348,14 @@
              first switch (app.js) so the frame never loads for sessions that
              don't open it. -->
         <section id="view-assistant" class="app-view app-view-assistant" style="display: none;">
+            <!-- Same subheader pattern as Tasks/Notes: space filter chips.
+                 The selection is written to localStorage and picked up inside
+                 the iframe by chat/public/simpler-bridge.js, which forwards
+                 it to the assistant backend (scopes /tasks, /notes and the
+                 injected space guidance). -->
+            <div class="assistant-toolbar">
+                <div class="space-chips" id="assistantSpaceChips"></div>
+            </div>
             <iframe id="assistantFrame" data-src="{{ assistant_url }}"
                     title="Simpler assistant chat" allow="clipboard-write"></iframe>
         </section>
