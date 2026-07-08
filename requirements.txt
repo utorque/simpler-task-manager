@@ -17,7 +17,7 @@ mcp>=1.9.0
 httpx>=0.27.0
 # Embedded assistant (chat/ + asgi.py): Chainlit UI, async SQLite for the
 # chat-history data layer, WSGI adapter to run Flask under uvicorn.
-chainlit>=2.11.0,<3
+chainlit==2.11.1
 aiosqlite>=0.20.0
 a2wsgi>=1.10.0
 uvicorn>=0.30.0
