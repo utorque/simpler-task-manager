@@ -12,7 +12,7 @@ Commands (registered with the Chainlit composer in chainlit_app.py):
   /notes                            the notes list (space-filtered)
 """
 
-from chat import simpler_client, workspace
+from chat import simpler_client, skills, workspace
 from chat.simpler_client import SimplerAPIError
 
 COMMANDS = [
@@ -24,6 +24,8 @@ COMMANDS = [
      'description': 'Add the current task board to the context'},
     {'id': 'notes', 'icon': 'files',
      'description': 'Add the list of notes to the context'},
+    {'id': 'skill', 'icon': 'graduation-cap',
+     'description': 'Load a skill (reusable instructions) into the conversation'},
 ]
 
 
@@ -89,11 +91,26 @@ async def _handle_notes(query: str, space_ids) -> str:
             + workspace.format_notes_list(notes))
 
 
+async def _handle_skill(query: str, space_ids) -> str:
+    available = skills.list_skills()
+    if not query.strip():
+        if not available:
+            return 'No skills are installed (chat/skills/).'
+        listing = '\n'.join(f"- **{s['name']}** — {s['description']}" for s in available)
+        return ('The user used /skill without a name. Installed skills:\n'
+                f'{listing}\nAsk which one to load.')
+    loaded = skills.load_skill(query)
+    # load_skill's unknown-name error is already model-readable; drop the
+    # tool-protocol prefix in the command path.
+    return loaded.removeprefix('TOOL ERROR: ')
+
+
 _HANDLERS = {
     'task': _handle_task,
     'note': _handle_note,
     'tasks': _handle_tasks,
     'notes': _handle_notes,
+    'skill': _handle_skill,
 }
 
 

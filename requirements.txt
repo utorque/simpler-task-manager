@@ -21,3 +21,5 @@ chainlit>=2.11.0,<3
 aiosqlite>=0.20.0
 a2wsgi>=1.10.0
 uvicorn>=0.30.0
+# assistant web_search tool (DuckDuckGo, no API key)
+ddgs>=9.0.0

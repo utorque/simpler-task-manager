@@ -30,7 +30,7 @@ settings.ensure_chainlit_env()  # before anything imports chainlit
 
 import chainlit as cl  # noqa: E402
 
-from chat import commands, files, simpler_client, workspace  # noqa: E402
+from chat import commands, files, simpler_client, skills, web_tools, workspace  # noqa: E402
 from chat.agent import AgentHooks, run_agent  # noqa: E402
 from chat.auth_bridge import is_authenticated  # noqa: E402
 from chat.data_layer import build_data_layer  # noqa: E402
@@ -141,8 +141,9 @@ async def on_mcp_disconnect(name: str, session):
 
 
 def add_native_tools(toolbox: Toolbox):
-    """In-process tools (extended by later steps: web search, sandbox
-    fallback)."""
+    if settings.web_tools_enabled():
+        web_tools.register(toolbox)
+    skills.register(toolbox)
 
 
 async def build_toolbox() -> Toolbox:
@@ -240,6 +241,9 @@ async def build_system_prompt(toolbox=None) -> str:
             'audited. Confirm with the user before anything destructive '
             '(deletes) — creating/updating tasks or notes they asked for '
             'needs no extra confirmation.')
+    skills_section = skills.prompt_section()
+    if skills_section:
+        parts.append(skills_section)
     return '\n\n'.join(parts)
 
 

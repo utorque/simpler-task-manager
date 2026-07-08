@@ -100,6 +100,10 @@ def agent_max_rounds() -> int:
     return int(os.getenv('CHAT_MAX_TOOL_ROUNDS', '8'))
 
 
+def web_tools_enabled() -> bool:
+    return os.getenv('CHAT_WEB_TOOLS', '1') != '0'
+
+
 def ensure_chainlit_env():
     """Set the env vars Chainlit needs, before `chainlit` is imported.
 
