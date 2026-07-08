@@ -48,6 +48,18 @@ def reset_system_prompt():
         pass
 
 
+def load_system_prompt() -> str:
+    """The base system prompt text — instance override when present, else
+    the shipped default. Called PER MESSAGE (never cached module-globally)
+    so in-app edits take effect on the next turn."""
+    try:
+        with open(system_prompt_path(), encoding='utf-8') as f:
+            return f.read()
+    except (FileNotFoundError, OSError):
+        return ('You are the built-in assistant of Simpler, a personal '
+                'task/notes workspace.')
+
+
 # ===== Model list (Bundle A) ==================================================
 
 def models_json_path() -> str:

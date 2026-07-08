@@ -30,7 +30,7 @@ settings.ensure_chainlit_env()  # before anything imports chainlit
 
 import chainlit as cl  # noqa: E402
 
-from chat import commands, files, sandbox_tools, simpler_client, skills, web_tools, workspace  # noqa: E402
+from chat import assistant_settings, commands, files, sandbox_tools, simpler_client, skills, web_tools, workspace  # noqa: E402
 from chat.agent import AgentHooks, run_agent  # noqa: E402
 from chat.auth_bridge import is_authenticated  # noqa: E402
 from chat.data_layer import build_data_layer  # noqa: E402
@@ -38,20 +38,6 @@ from chat.mcp_tools import MCPToolServer, tool_to_spec  # noqa: E402
 from chat.providers import LLMClient  # noqa: E402
 from chat.simpler_client import SimplerAPIError  # noqa: E402
 from chat.toolbox import Toolbox  # noqa: E402
-
-SYSTEM_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'system.md')
-
-
-def load_system_prompt() -> str:
-    try:
-        with open(SYSTEM_PROMPT_PATH, encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        return 'You are the built-in assistant of Simpler, a personal task/notes workspace.'
-
-
-SYSTEM_PROMPT = load_system_prompt()
-
 
 # ===== Auth: one login for the whole app =====================================
 # The assistant is same-origin with Simpler, so the Flask session cookie rides
@@ -189,7 +175,12 @@ async def on_window_message(message):
 
 
 def selected_space_ids() -> list[int] | None:
-    return cl.user_session.get('space_filter')
+    try:
+        return cl.user_session.get('space_filter')
+    except Exception:
+        # No Chainlit session context (settings-panel composition viewer,
+        # tests): no filter.
+        return None
 
 
 # ===== Starters (tasks in Doing) + composer commands ==========================
@@ -257,7 +248,10 @@ async def on_chat_resume(thread):
 
 
 async def build_system_prompt(toolbox=None) -> str:
-    parts = [SYSTEM_PROMPT,
+    # The base prompt is re-read every call (instance override when the user
+    # edited it in-app, else the shipped default) so edits are live — the
+    # dynamic layers below were always per-turn.
+    parts = [assistant_settings.load_system_prompt(),
              f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M')} "
              f"({datetime.now().strftime('%A')})."]
     if simpler_client.configured():
