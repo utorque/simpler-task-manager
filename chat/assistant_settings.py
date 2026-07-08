@@ -84,6 +84,13 @@ def write_models(models: list[str]):
         json.dump(list(models), f, indent=2)
 
 
+def available_models() -> list[str]:
+    """The model-picker list: instance models.json when non-empty, else the
+    CHAT_MODELS/AI_MODEL env chain (settings.chat_models()). First entry is
+    the default."""
+    return read_models() or settings.chat_models()
+
+
 # ===== Skills dirs (Bundle B) =================================================
 
 def instance_skills_dir() -> str:

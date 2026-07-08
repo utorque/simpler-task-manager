@@ -30,7 +30,7 @@ settings.ensure_chainlit_env()  # before anything imports chainlit
 
 import chainlit as cl  # noqa: E402
 
-from chat import assistant_settings, commands, files, sandbox_tools, simpler_client, skills, web_tools, workspace  # noqa: E402
+from chat import assistant_settings, commands, files, modes, sandbox_tools, simpler_client, skills, web_tools, workspace  # noqa: E402
 from chat.agent import AgentHooks, run_agent  # noqa: E402
 from chat.auth_bridge import is_authenticated  # noqa: E402
 from chat.data_layer import build_data_layer  # noqa: E402
@@ -59,23 +59,22 @@ def data_layer():
     return build_data_layer(settings.chainlit_db_path())
 
 
-# ===== Model picker (chat profiles = models from .env) ========================
+# ===== Model picker (Modes: chat-bar picker, switchable mid-conversation) =====
+# Model list source: instance/assistant/models.json (settings panel writes
+# it), falling back to the CHAT_MODELS/AI_MODEL env chain. Selection is read
+# per message from msg.modes, so it persists within a chat and switches live.
 
-@cl.set_chat_profiles
-async def chat_profiles():
-    models = settings.chat_models()
+def build_chat_modes() -> list[cl.Mode]:
+    model_options = modes.build_model_mode_options(
+        assistant_settings.available_models())
     return [
-        cl.ChatProfile(
-            name=model,
-            markdown_description=f'Answer with **{model}** via the configured provider.',
-            default=(index == 0),
-        )
-        for index, model in enumerate(models)
+        cl.Mode(id=modes.MODEL_MODE_ID, name='Model',
+                options=[cl.ModeOption(**opt) for opt in model_options]),
     ]
 
 
-def current_model() -> str:
-    return cl.user_session.get('chat_profile') or settings.chat_models()[0]
+async def publish_modes():
+    await cl.context.emitter.set_modes(build_chat_modes())
 
 
 def get_llm() -> LLMClient:
@@ -234,6 +233,7 @@ async def register_commands():
 @cl.on_chat_start
 async def on_chat_start():
     await register_commands()
+    await publish_modes()
     if not settings.ai_api_key():
         await cl.Message(
             content='⚠️ No AI provider configured — set `AI_API_KEY` (and '
@@ -244,7 +244,10 @@ async def on_chat_start():
 @cl.on_chat_resume
 async def on_chat_resume(thread):
     # Chainlit restores the message history into the chat context itself.
+    # Pre-Modes threads keep their history; their old profile selection is
+    # simply gone (no backfill) — the pickers start at the defaults.
     await register_commands()
+    await publish_modes()
 
 
 async def build_system_prompt(toolbox=None) -> str:
@@ -336,10 +339,13 @@ async def on_message(message: cl.Message):
     # modifies during this turn are sent back, not the user's own uploads.
     workspace_before = files.snapshot_dir(settings.files_dir())
 
+    model = modes.current_model_from_modes(
+        getattr(message, 'modes', None),
+        default=assistant_settings.available_models()[0])
     try:
         await run_agent(
             llm=get_llm(),
-            model=current_model(),
+            model=model,
             system=await build_system_prompt(toolbox),
             history=history,
             toolbox=toolbox,
