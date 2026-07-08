@@ -70,6 +70,36 @@ def chainlit_db_path() -> str:
     return os.path.join(INSTANCE_DIR, 'chainlit.db')
 
 
+def simpler_mcp_url():
+    """URL of Simpler's own MCP sidecar (pre-integrated tool server).
+    Compose wires http://mcp:8765/mcp; unset -> workspace tools come only
+    from what the user plugs in via the UI."""
+    return os.getenv('SIMPLER_MCP_URL') or None
+
+
+def extra_mcp_servers() -> dict[str, str]:
+    """Additional pre-integrated MCP servers: CHAT_MCP_SERVERS is a
+    comma-separated list of name=url pairs (streamable HTTP)."""
+    servers = {}
+    for entry in os.getenv('CHAT_MCP_SERVERS', '').split(','):
+        name, _, url = entry.strip().partition('=')
+        if name and url:
+            servers[name.strip()] = url.strip()
+    return servers
+
+
+def files_dir() -> str:
+    """Where uploaded/produced files live. Step 5 points this at the volume
+    shared with the sandbox container."""
+    path = os.getenv('CHAT_FILES_DIR') or os.path.join(INSTANCE_DIR, 'assistant_files')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def agent_max_rounds() -> int:
+    return int(os.getenv('CHAT_MAX_TOOL_ROUNDS', '8'))
+
+
 def ensure_chainlit_env():
     """Set the env vars Chainlit needs, before `chainlit` is imported.
 

@@ -13,6 +13,13 @@ Core domain vocabulary:
 - **Spaces** scope tasks/notes/mail and carry user-written AI guidance
   (`context markdown`) plus weekly time windows for the auto-scheduler.
 
+## Tools
+
+When workspace tools are available (they are listed in your instructions),
+prefer them over guessing: read the board before recommending work, create
+or update tasks/notes when the user asks, run the scheduler when they want
+their day planned. Report what you changed. Ask before deleting anything.
+
 ## Injected context
 
 The user can inject workspace context into the conversation with slash

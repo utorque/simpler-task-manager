@@ -30,11 +30,14 @@ settings.ensure_chainlit_env()  # before anything imports chainlit
 
 import chainlit as cl  # noqa: E402
 
-from chat import commands, simpler_client, workspace  # noqa: E402
+from chat import commands, files, simpler_client, workspace  # noqa: E402
+from chat.agent import AgentHooks, run_agent  # noqa: E402
 from chat.auth_bridge import is_authenticated  # noqa: E402
 from chat.data_layer import build_data_layer  # noqa: E402
+from chat.mcp_tools import MCPToolServer, tool_to_spec  # noqa: E402
 from chat.providers import LLMClient  # noqa: E402
 from chat.simpler_client import SimplerAPIError  # noqa: E402
+from chat.toolbox import Toolbox  # noqa: E402
 
 SYSTEM_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'system.md')
 
@@ -97,6 +100,65 @@ def get_llm() -> LLMClient:
     )
 
 
+# ===== Tools: pre-integrated MCP servers + UI-added MCP + natives ============
+
+_preintegrated_servers: list[MCPToolServer] | None = None
+
+
+def preintegrated_servers() -> list[MCPToolServer]:
+    """Simpler's own MCP sidecar (SIMPLER_MCP_URL) + CHAT_MCP_SERVERS,
+    instantiated once per process (tool listings are cached inside)."""
+    global _preintegrated_servers
+    if _preintegrated_servers is None:
+        servers = []
+        if settings.simpler_mcp_url():
+            servers.append(MCPToolServer('simpler', settings.simpler_mcp_url()))
+        for name, url in settings.extra_mcp_servers().items():
+            servers.append(MCPToolServer(name, url))
+        _preintegrated_servers = servers
+    return _preintegrated_servers
+
+
+@cl.on_mcp_connect
+async def on_mcp_connect(connection, session):
+    """User plugged an MCP server in through the UI: list its tools once and
+    keep the (Chainlit-managed) session for tool calls."""
+    listing = await session.list_tools()
+    specs = [tool_to_spec(t, connection.name) for t in listing.tools]
+    sessions = cl.user_session.get('mcp_sessions') or {}
+    sessions[connection.name] = {'session': session, 'specs': specs}
+    cl.user_session.set('mcp_sessions', sessions)
+    await cl.Message(
+        content=f'🔌 MCP server **{connection.name}** connected '
+                f'({len(specs)} tools).').send()
+
+
+@cl.on_mcp_disconnect
+async def on_mcp_disconnect(name: str, session):
+    sessions = cl.user_session.get('mcp_sessions') or {}
+    sessions.pop(name, None)
+    cl.user_session.set('mcp_sessions', sessions)
+
+
+def add_native_tools(toolbox: Toolbox):
+    """In-process tools (extended by later steps: web search, sandbox
+    fallback)."""
+
+
+async def build_toolbox() -> Toolbox:
+    toolbox = Toolbox()
+    for server in preintegrated_servers():
+        try:
+            await toolbox.add_mcp_server(server)
+        except Exception as e:
+            # A down sidecar must not take the chat down with it.
+            print(f'[assistant] MCP server {server.name!r} unavailable: {e}')
+    for name, entry in (cl.user_session.get('mcp_sessions') or {}).items():
+        toolbox.add_mcp_session(name, entry['session'], entry['specs'])
+    add_native_tools(toolbox)
+    return toolbox
+
+
 # ===== Space filter (shell subheader -> chat/public/simpler-bridge.js) =======
 
 @cl.on_window_message
@@ -157,7 +219,7 @@ async def on_chat_resume(thread):
     await register_commands()
 
 
-async def build_system_prompt() -> str:
+async def build_system_prompt(toolbox=None) -> str:
     parts = [SYSTEM_PROMPT,
              f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M')} "
              f"({datetime.now().strftime('%A')})."]
@@ -170,11 +232,57 @@ async def build_system_prompt() -> str:
     else:
         parts.append('(Workspace access is not configured: API_TOKEN unset — '
                      'you cannot see tasks/notes/spaces.)')
+    if toolbox is not None and toolbox.specs():
+        names = ', '.join(spec['name'] for spec in toolbox.specs())
+        parts.append(
+            '## Tools\n'
+            f'You can call these tools: {names}. Workspace mutations are '
+            'audited. Confirm with the user before anything destructive '
+            '(deletes) — creating/updating tasks or notes they asked for '
+            'needs no extra confirmation.')
     return '\n\n'.join(parts)
+
+
+class UIHooks(AgentHooks):
+    """Render agent events: one streamed message per model round, one
+    collapsible step per tool call."""
+
+    def __init__(self):
+        self._message: cl.Message | None = None
+        self._steps: dict[str, cl.Step] = {}
+
+    async def on_text(self, delta: str):
+        if self._message is None:
+            self._message = cl.Message(content='')
+        await self._message.stream_token(delta)
+
+    async def on_round_end(self, result):
+        if self._message is not None:
+            await self._message.update()
+            self._message = None
+
+    async def on_tool_start(self, call):
+        step = cl.Step(name=call.name, type='tool')
+        step.input = json.dumps(call.arguments, indent=2, ensure_ascii=False)
+        await step.send()
+        self._steps[call.id] = step
+
+    async def on_tool_end(self, call, output: str):
+        step = self._steps.pop(call.id, None)
+        if step is not None:
+            step.output = output
+            await step.update()
 
 
 @cl.on_message
 async def on_message(message: cl.Message):
+    # Attached files land in the thread as a persisted context block (text
+    # inlined, everything stored in the assistant's file workspace).
+    file_block = files.ingest_elements(message.elements, settings.files_dir())
+    if file_block:
+        await cl.Message(content=file_block, type='system_message',
+                         author='Attached files').send()
+
     # Slash commands inject workspace context as a persisted system message
     # BEFORE the model answers, so it is part of the thread from here on.
     if message.command:
@@ -188,19 +296,17 @@ async def on_message(message: cl.Message):
                              author='Workspace context').send()
 
     history = cl.chat_context.to_openai()
-    reply = cl.Message(content='')
-
-    async def on_text(delta: str):
-        await reply.stream_token(delta)
+    toolbox = await build_toolbox()
 
     try:
-        await get_llm().stream_chat(
+        await run_agent(
+            llm=get_llm(),
             model=current_model(),
-            system=await build_system_prompt(),
-            messages=history,
-            on_text=on_text,
+            system=await build_system_prompt(toolbox),
+            history=history,
+            toolbox=toolbox,
+            hooks=UIHooks(),
+            max_rounds=settings.agent_max_rounds(),
         )
     except Exception as e:  # surface provider errors in-chat, don't crash the session
         await cl.Message(content=f'❌ Provider error: {e}').send()
-        return
-    await reply.update()

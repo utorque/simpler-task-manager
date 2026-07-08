@@ -28,6 +28,10 @@ services:
       - "53000:53000"
     env_file:
       - .env
+    environment:
+      # Pre-integrate the simpler-mcp sidecar as the assistant's workspace
+      # tool server (agent mutations audited as actor='agent').
+      SIMPLER_MCP_URL: http://mcp:8765/mcp
     volumes:
       - ./instance:/app/instance
     restart: unless-stopped

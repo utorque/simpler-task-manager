@@ -42,8 +42,13 @@ from sqlalchemy.pool import StaticPool
 # REDIRECT prod DB -> in-memory BEFORE importing `app` (which calls
 # db.create_all() + seeding at import time).
 config.Config.SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
-# Keep one in-memory connection alive for the whole session.
-config.Config.SQLALCHEMY_ENGINE_OPTIONS = {"poolclass": StaticPool}
+# Keep one in-memory connection alive for the whole session. FastMCP runs
+# sync tools in a worker thread (test_chat_mcp_integration.py), so the shared
+# connection must not be pinned to the importing thread.
+config.Config.SQLALCHEMY_ENGINE_OPTIONS = {
+    "poolclass": StaticPool,
+    "connect_args": {"check_same_thread": False},
+}
 # Tests should not need real AI credentials.
 os.environ.setdefault("AI_API_KEY", "stub-key-not-used-in-tests")
 os.environ.setdefault("APP_PASSWORD", "test-password")
