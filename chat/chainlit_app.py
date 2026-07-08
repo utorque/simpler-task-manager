@@ -148,7 +148,13 @@ async def build_toolbox() -> Toolbox:
         except Exception as e:
             # A down sidecar must not take the chat down with it.
             print(f'[assistant] MCP server {server.name!r} unavailable: {e}')
-    for name, entry in (cl.user_session.get('mcp_sessions') or {}).items():
+    try:
+        mcp_sessions = cl.user_session.get('mcp_sessions') or {}
+    except Exception:
+        # No Chainlit session context (settings-panel composition viewer):
+        # only pre-integrated servers + natives.
+        mcp_sessions = {}
+    for name, entry in mcp_sessions.items():
         toolbox.add_mcp_session(name, entry['session'], entry['specs'])
     add_native_tools(toolbox)
     return toolbox
@@ -255,34 +261,82 @@ async def on_chat_resume(thread):
     await publish_modes()
 
 
-async def build_system_prompt(toolbox=None) -> str:
-    # The base prompt is re-read every call (instance override when the user
-    # edited it in-app, else the shipped default) so edits are live — the
-    # dynamic layers below were always per-turn.
-    parts = [assistant_settings.load_system_prompt(),
-             f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M')} "
-             f"({datetime.now().strftime('%A')})."]
-    if simpler_client.configured():
+async def build_system_prompt_layers(toolbox=None, spaces=None) -> list[dict]:
+    """The system prompt as an ordered list of named layers — the single
+    source both `build_system_prompt` (joined text for the model) and the
+    settings panel's composition viewer (structured metadata) derive from.
+
+    The base prompt is re-read every call (instance override when the user
+    edited it in-app, else the shipped default) so edits are live — the
+    dynamic layers below were always per-turn. Pass pre-fetched `spaces` to
+    skip the API round-trip (the Flask composition route reads them straight
+    from the DB — it cannot loop back into its own HTTP server)."""
+    base_path = assistant_settings.system_prompt_path()
+    is_override = (base_path == assistant_settings.system_prompt_override_path())
+    try:
+        last_modified = datetime.fromtimestamp(
+            os.path.getmtime(base_path)).isoformat(timespec='seconds')
+    except OSError:
+        last_modified = None
+    layers = [{
+        'kind': 'base',
+        'name': os.path.basename(base_path)
+                + (' (instance override)' if is_override else ' (shipped default)'),
+        'source': 'instance' if is_override else 'bundled',
+        'last_modified': last_modified,
+        'text': assistant_settings.load_system_prompt(),
+    }]
+
+    now = datetime.now()
+    layers.append({
+        'kind': 'datetime',
+        'text': f"Current date and time: {now.strftime('%Y-%m-%d %H:%M')} "
+                f"({now.strftime('%A')}).",
+    })
+
+    selected = selected_space_ids()
+    if spaces is None and simpler_client.configured():
         try:
             spaces = await simpler_client.list_spaces()
-            parts.append(workspace.format_spaces_guidance(spaces, selected_space_ids()))
         except SimplerAPIError as e:
-            parts.append(f'(Workspace API unavailable right now: {e})')
-    else:
-        parts.append('(Workspace access is not configured: API_TOKEN unset — '
-                     'you cannot see tasks/notes/spaces.)')
-    if toolbox is not None and toolbox.specs():
-        names = ', '.join(spec['name'] for spec in toolbox.specs())
-        parts.append(
-            '## Tools\n'
-            f'You can call these tools: {names}. Workspace mutations are '
-            'audited. Confirm with the user before anything destructive '
-            '(deletes) — creating/updating tasks or notes they asked for '
-            'needs no extra confirmation.')
+            layers.append({'kind': 'spaces_guidance', 'sources': [],
+                           'text': f'(Workspace API unavailable right now: {e})'})
+    if spaces is not None:
+        shown = [s['name'] for s in spaces
+                 if selected is None or s['id'] in selected] \
+                or [s['name'] for s in spaces]
+        layers.append({'kind': 'spaces_guidance', 'sources': shown,
+                       'text': workspace.format_spaces_guidance(spaces, selected)})
+    elif not simpler_client.configured():
+        layers.append({'kind': 'spaces_guidance', 'sources': [],
+                       'text': '(Workspace access is not configured: API_TOKEN '
+                               'unset — you cannot see tasks/notes/spaces.)'})
+
+    tool_names = [spec['name'] for spec in toolbox.specs()] if toolbox else []
+    if tool_names:
+        layers.append({
+            'kind': 'tools',
+            'items': tool_names,
+            'text': '## Tools\n'
+                    f"You can call these tools: {', '.join(tool_names)}. "
+                    'Workspace mutations are audited. Confirm with the user '
+                    'before anything destructive (deletes) — creating/updating '
+                    'tasks or notes they asked for needs no extra confirmation.',
+        })
+
     skills_section = skills.prompt_section()
     if skills_section:
-        parts.append(skills_section)
-    return '\n\n'.join(parts)
+        layers.append({
+            'kind': 'skills',
+            'items': [s['name'] for s in skills.list_skills()],
+            'text': skills_section,
+        })
+    return layers
+
+
+async def build_system_prompt(toolbox=None) -> str:
+    layers = await build_system_prompt_layers(toolbox)
+    return '\n\n'.join(layer['text'] for layer in layers if layer.get('text'))
 
 
 class UIHooks(AgentHooks):

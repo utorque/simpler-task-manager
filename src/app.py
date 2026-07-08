@@ -24,6 +24,7 @@ def create_app(config_object=Config):
     from routes.schedule import schedule_bp
     from routes.mailboxes import mailboxes_bp
     from routes.workspace import workspace_bp
+    from routes.assistant_settings import assistant_settings_bp
 
     app.register_blueprint(pages_bp)
     app.register_blueprint(tasks_bp)
@@ -33,6 +34,7 @@ def create_app(config_object=Config):
     app.register_blueprint(schedule_bp)
     app.register_blueprint(mailboxes_bp)
     app.register_blueprint(workspace_bp)
+    app.register_blueprint(assistant_settings_bp)
 
     with app.app_context():
         db.create_all()
