@@ -11,8 +11,6 @@ skills and transcripts are identical either way.
 
 import functools
 
-from sandbox import tools
-
 SCHEMAS = {
     'run_python': {
         'type': 'object',
@@ -70,6 +68,10 @@ DESCRIPTIONS = {
 
 
 def register(toolbox, workspace: str):
+    # Imported lazily: the fallback is opt-in (CHAT_LOCAL_SANDBOX=1) and the
+    # web app must import fine without the sandbox package installed.
+    from sandbox import tools
+
     for name in SCHEMAS:
         fn = functools.partial(getattr(tools, name), workspace)
         toolbox.add_native(f'sandbox__{name}', DESCRIPTIONS[name], SCHEMAS[name], fn)

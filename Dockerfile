@@ -9,6 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY src/ ./src/
 COPY chat/ ./chat/
+# sandbox/tools.py backs the optional in-process fallback (CHAT_LOCAL_SANDBOX=1)
+COPY sandbox/ ./sandbox/
 COPY asgi.py .
 
 # Create directory for database (app SQLite + assistant chat history)
