@@ -1,6 +1,6 @@
 # PRD — Deeper Assistant Integration
 
-- **Status**: Aligned
+- **Status**: Implemented (2026-07-08) — issues 003.01–003.10 all DONE, archived in `issues/archive/` (each carries a closing note with deviations); context docs updated per Further Notes
 - **Created**: 2026-07-08
 - **Supersedes**: —
 - **Related**: `002_PRD_hermes-agent-integration.md` (archived; this builds on its embedded-Chainlit replacement), `000_PrePRD_unified-adhd-workspace.md` (applied vision)
