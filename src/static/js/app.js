@@ -900,7 +900,8 @@ function renderBoard() {
 }
 
 function renderBoardCard(task) {
-    const priorityClass = task.priority >= 7 ? 'priority-high' :
+    const priorityClass = task.priority >= 9 ? 'priority-critical' :
+                         task.priority >= 7 ? 'priority-high' :
                          task.priority >= 4 ? 'priority-medium' : 'priority-low';
     const deadline = task.deadline ? new Date(task.deadline) : null;
     const deadlineStr = deadline ? formatDeadline(deadline) : '';
@@ -1225,7 +1226,8 @@ function renderTasks() {
     const fragment = document.createDocumentFragment();
 
     visibleTasks.forEach(task => {
-        const priorityClass = task.priority >= 7 ? 'priority-high' :
+        const priorityClass = task.priority >= 9 ? 'priority-critical' :
+                             task.priority >= 7 ? 'priority-high' :
                              task.priority >= 4 ? 'priority-medium' : 'priority-low';
 
         const deadline = task.deadline ? new Date(task.deadline) : null;
@@ -2172,7 +2174,8 @@ function renderSpaceTasks(spaceTasks) {
 
     // Render tasks with vertical sizing based on duration
     return tasksWithUrgency.map(({ task }) => {
-        const priorityClass = task.priority >= 7 ? 'priority-high' :
+        const priorityClass = task.priority >= 9 ? 'priority-critical' :
+                             task.priority >= 7 ? 'priority-high' :
                              task.priority >= 4 ? 'priority-medium' : 'priority-low';
 
         const deadline = task.deadline ? new Date(task.deadline) : null;
