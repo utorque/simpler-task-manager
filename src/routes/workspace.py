@@ -42,7 +42,7 @@ def resolve_in_root(root: str, relpath: str):
     is not allowlisted or the path escapes it. The traversal check itself
     (realpath + prefix, null-byte/backslash rejection) is the shared
     `chat.files.resolve_under` — one gate for this blueprint and the
-    attach_file_to_answer tool."""
+    get_file_link tool."""
     factory = ROOTS.get(root or '')
     if factory is None:
         return None

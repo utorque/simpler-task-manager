@@ -4,11 +4,13 @@ In: message attachments become model context — text-like files are inlined
 (fenced, truncated at MAX_INLINE_CHARS), everything is stored in the shared
 file workspace (settings.files_dir()) so tools can operate on them.
 
-Out (issue 003.10): the model delivers files EXPLICITLY — the
-`attach_file_to_answer` tool queues a workspace file for a rich download
-chip after the turn (no more auto-attaching every file the turn touched),
-and the system prompt documents the inline-link URL convention
+Out: the model delivers files by LINK, never as a raw attachment. The
+`get_file_link` tool validates a workspace path and returns a ready-to-embed
+markdown download link using the sanctioned URL convention
 (`/api/workspace/files/workspace/<rel>`, served by src/routes/workspace.py).
+The link lives in the model's reply text, so it persists in chat history
+across thread reloads with no blob-storage provider — unlike Chainlit
+`cl.File` elements, which need one and are dropped without it.
 
 `resolve_under()` is the shared traversal gate for both the tool and the
 workspace blueprint.
@@ -17,10 +19,17 @@ workspace blueprint.
 import os
 import re
 import shutil
+from urllib.parse import quote
 
 MAX_INLINE_CHARS = 24_000
 
-ATTACH_FILE_SCHEMA = {
+# The 'workspace' root of the /api/workspace/files/<root>/<rel> download route
+# (src/routes/workspace.py ROOTS) maps to the same directory as the tool's
+# store_dir (chat.settings.files_dir()), so a path relative to store_dir is
+# exactly the <rel> the route expects.
+WORKSPACE_URL_ROOT = 'workspace'
+
+FILE_LINK_SCHEMA = {
     'type': 'object',
     'properties': {
         'path': {'type': 'string',
@@ -36,7 +45,7 @@ def resolve_under(root: str, path: str) -> str | None:
     """Canonicalized absolute path of `path` inside `root`, or None when it
     escapes (traversal, out-of-root absolute path, out-of-root symlink,
     null byte, backslash). The single traversal check shared by the
-    attach_file_to_answer tool and the /api/workspace blueprint."""
+    get_file_link tool and the /api/workspace blueprint."""
     path = path or ''
     if not path or '\0' in path or '\\' in path:
         return None
@@ -48,30 +57,41 @@ def resolve_under(root: str, path: str) -> str | None:
     return full
 
 
-def register(toolbox, store_dir: str, queue: list):
-    """Register `attach_file_to_answer`: validates the path against the
-    workspace root and appends it to `queue` — the caller (on_message)
-    flushes the queue as cl.File chips once the agent's turn ends."""
-    def attach_file_to_answer(path: str) -> str:
+def workspace_file_url(store_dir: str, full: str) -> str:
+    """Sanctioned same-origin download URL for an in-workspace file. Each path
+    segment is percent-encoded (spaces, unicode, etc.) so the returned link is
+    valid markdown; the `/` separators are preserved."""
+    rel = os.path.relpath(full, os.path.realpath(store_dir))
+    encoded = quote(rel.replace(os.sep, '/'), safe='/')
+    return f'/api/workspace/files/{WORKSPACE_URL_ROOT}/{encoded}'
+
+
+def register(toolbox, store_dir: str):
+    """Register `get_file_link`: validates a path against the workspace root
+    and returns a ready-to-embed markdown download link. The model puts the
+    link in its reply text — files are delivered by link, never as raw
+    Chainlit attachments (which need a blob-storage provider to persist)."""
+    def get_file_link(path: str) -> str:
         full = resolve_under(store_dir, path)
         if full is None:
             return ('TOOL ERROR: that path is outside the shared workspace — '
-                    'only files under the workspace root can be attached.')
+                    'only files under the workspace root can be linked.')
         if not os.path.isfile(full):
             return f'TOOL ERROR: file not found: {path}'
-        if full not in queue:
-            queue.append(full)
+        name = os.path.basename(full)
+        url = workspace_file_url(store_dir, full)
         size = os.path.getsize(full)
-        return (f'File queued for delivery: {os.path.basename(full)} '
-                f'({size} bytes). It will be attached to your answer as a '
-                'download chip when your turn ends.')
+        return (f'Download link for {name} ({size} bytes). Include this exact '
+                f'markdown link in your reply so the user can download it: '
+                f'[{name}]({url})')
 
     toolbox.add_native(
-        'attach_file_to_answer',
-        'Deliver a workspace file to the user as a rich download chip '
-        'attached to your answer. Use it only for files the user should '
-        'receive — scratch/intermediate files are never auto-surfaced.',
-        ATTACH_FILE_SCHEMA, attach_file_to_answer)
+        'get_file_link',
+        'Get a download link for a workspace file to give the user. Returns a '
+        'markdown link you embed in your reply — this is the ONLY way to '
+        'deliver a file; you cannot attach files directly. Use it only for '
+        'files the user should receive, never scratch/intermediate files.',
+        FILE_LINK_SCHEMA, get_file_link)
 
 
 def _safe_name(name: str) -> str:
