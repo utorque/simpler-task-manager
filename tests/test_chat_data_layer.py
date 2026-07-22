@@ -341,3 +341,86 @@ def test_data_layer_full_thread_lifecycle(tmp_path):
         assert await layer.get_thread(thread_id) is None
 
     asyncio.run(scenario())
+
+
+def test_ensure_schema_backfills_null_created_at(tmp_path):
+    """Rows written by the old UIHooks path have createdAt=NULL, which sorts
+    them ahead of their parent run step on resume so the frontend drops them.
+    ensure_schema must back-fill each NULL createdAt from the nearest preceding
+    step in the same thread so existing history renders again."""
+    db_path = str(tmp_path / 'chainlit.db')
+    ensure_schema(db_path)
+
+    conn = sqlite3.connect(db_path)
+    # A turn as it would already sit in a pre-fix DB: timestamped user message
+    # + run step + tool, then the answer with NULL createdAt.
+    conn.executescript('''
+        INSERT INTO steps ("id","name","type","threadId","streaming","createdAt")
+        VALUES ('u','owner','user_message','t',0,'2026-07-08T10:00:00Z'),
+               ('r','on_message','run','t',0,'2026-07-08T10:00:01Z'),
+               ('x','tool','tool','t',0,'2026-07-08T10:00:02Z');
+        INSERT INTO steps ("id","name","type","threadId","streaming","createdAt","output")
+        VALUES ('a','assistant','assistant_message','t',0,NULL,'the answer');
+        -- A NULL row with no earlier timestamped sibling stays NULL.
+        INSERT INTO steps ("id","name","type","threadId","streaming","createdAt")
+        VALUES ('orphan','x','user_message','other',0,NULL);
+    ''')
+    conn.commit()
+    conn.close()
+
+    ensure_schema(db_path)  # back-fill runs here (and stays idempotent)
+
+    conn = sqlite3.connect(db_path)
+    got = dict(conn.execute('SELECT id, "createdAt" FROM steps').fetchall())
+    conn.close()
+    # The answer inherits the nearest preceding timestamp (the tool's), so it
+    # now sorts after its run step instead of before it.
+    assert got['a'] == '2026-07-08T10:00:02Z'
+    assert got['orphan'] is None  # nothing earlier to borrow from
+
+
+def test_streamed_assistant_message_persists_with_created_at(tmp_path):
+    """Regression: UIHooks streamed the answer and finalized it with
+    Message.update(), which never stamps created_at — so the row persisted
+    with createdAt=NULL. On resume Chainlit orders steps by createdAt ASC
+    (NULLs first), sorting the timestamp-less answer ahead of its parent
+    `on_message` run step; the frontend tree-builder then drops any step whose
+    parent isn't placed yet, so the answer rendered live but vanished on
+    reload. on_round_end must finalize with .send() so created_at is set.
+
+    Runs the REAL UIHooks against an HTTP Chainlit context (no websocket
+    needed — the stub emitter is a no-op) and asserts the persisted
+    assistant_message carries a createdAt."""
+    import chainlit.data as cl_data
+    from chainlit.context import init_http_context
+
+    from chat.chainlit_app import UIHooks
+
+    db_path = str(tmp_path / 'chainlit.db')
+    layer = build_data_layer(db_path)
+
+    async def scenario():
+        previous = cl_data._data_layer
+        cl_data._data_layer = layer
+        try:
+            user = await layer.create_user(User(identifier='owner'))
+            thread_id = str(uuid.uuid4())
+            await layer.update_thread(thread_id, name='resume', user_id=user.id)
+            init_http_context(thread_id=thread_id, user=user)
+
+            hooks = UIHooks()
+            await hooks.on_text('Done — created the tasks.')
+            await hooks.on_round_end(object())  # result arg is unused here
+            await asyncio.sleep(0.2)  # let the fire-and-forget persist run
+
+            row = sqlite3.connect(db_path).execute(
+                'SELECT "createdAt", "output" FROM steps '
+                "WHERE type = 'assistant_message'").fetchone()
+            assert row is not None, 'assistant message was not persisted'
+            assert row[0] is not None, \
+                'createdAt is NULL — resume sorts it before its run and drops it'
+            assert row[1] == 'Done — created the tasks.'
+        finally:
+            cl_data._data_layer = previous
+
+    asyncio.run(scenario())

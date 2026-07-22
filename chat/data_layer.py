@@ -122,9 +122,43 @@ def ensure_schema(db_path: str):
                 conn.execute(
                     f'ALTER TABLE steps ADD COLUMN "{col}" {coltype}'
                 )
+        _backfill_null_created_at(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _backfill_null_created_at(conn):
+    """Heal steps written with createdAt=NULL.
+
+    A streamed assistant answer finalized with `Message.update()` (the old
+    UIHooks path) persisted with no createdAt. On resume Chainlit orders steps
+    `createdAt ASC` — NULLs sort first, ahead of the answer's parent
+    `on_message` run step — and the frontend tree-builder drops any step whose
+    parent isn't placed yet, so those answers vanish on reload. Give each
+    NULL-createdAt row the timestamp of the nearest preceding step in the same
+    thread (rowid order = insertion order = chronological), which sorts it back
+    into place. Idempotent: only NULL rows are touched, and a row with no
+    earlier timestamped sibling is left alone.
+    """
+    conn.execute(
+        '''
+        UPDATE steps SET "createdAt" = (
+            SELECT s2."createdAt" FROM steps s2
+            WHERE s2."threadId" = steps."threadId"
+              AND s2.rowid < steps.rowid
+              AND s2."createdAt" IS NOT NULL
+            ORDER BY s2.rowid DESC LIMIT 1
+        )
+        WHERE "createdAt" IS NULL
+          AND EXISTS (
+            SELECT 1 FROM steps s3
+            WHERE s3."threadId" = steps."threadId"
+              AND s3.rowid < steps.rowid
+              AND s3."createdAt" IS NOT NULL
+          )
+        '''
+    )
 
 
 # Columns that are native structured types on Postgres (array / JSONB) but

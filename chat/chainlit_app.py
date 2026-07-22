@@ -412,7 +412,15 @@ class UIHooks(AgentHooks):
 
     async def on_round_end(self, result):
         if self._message is not None:
-            await self._message.update()
+            # End the stream with .send(), NOT .update(): update() never sets
+            # created_at, so the message persists with createdAt=NULL. On
+            # resume Chainlit orders steps by createdAt ASC (NULLs first), so a
+            # timestamp-less answer sorts ahead of its parent `on_message` run
+            # step; the frontend tree-builder then drops any step whose parent
+            # isn't placed yet — the answer renders live but vanishes on
+            # reload. .send() stamps created_at (Chainlit's documented
+            # end-of-stream call) and keeps the answer in the history.
+            await self._message.send()
             self._message = None
 
     async def on_tool_start(self, call):
