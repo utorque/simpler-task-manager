@@ -157,6 +157,148 @@ def test_data_layer_thread_and_step_tags_round_trip_as_lists(tmp_path):
     asyncio.run(scenario())
 
 
+def test_data_layer_step_modes_round_trip_as_dict(tmp_path):
+    """Regression: Chainlit 2.11's mode selector puts a `modes` dict
+    ({'model': ..., 'reasoning': ...}) on every user_message step. Upstream
+    json.dumps()es only `metadata` and `generation`, so the dict was bound
+    verbatim and SQLite refused it:
+
+        sqlite3.ProgrammingError: Error binding parameter 4:
+        type 'dict' is not supported
+
+    That raised inside the persistence path, so the chat kept working while
+    every user message was silently dropped from the history DB. Same shape
+    as the `tags` bug — invisible on Postgres (JSONB), fatal on SQLite.
+    """
+    db_path = str(tmp_path / 'chainlit.db')
+    layer = build_data_layer(db_path)
+
+    async def scenario():
+        user = await layer.create_user(User(identifier='owner'))
+        thread_id = str(uuid.uuid4())
+        await layer.update_thread(thread_id, name='modes bug', user_id=user.id)
+
+        create_step = type(layer).create_step.__wrapped__
+        step_id = str(uuid.uuid4())
+        # The exact payload shape that raised ProgrammingError.
+        await create_step(layer, {
+            'id': step_id,
+            'threadId': thread_id,
+            'name': 'owner',
+            'type': 'user_message',
+            'streaming': False,
+            'output': 'test hello',
+            'modes': {'model': 'glm-5.2-short', 'reasoning': 'low'},
+            'metadata': {'location': 'http://localhost:53000/assistant/'},
+            'createdAt': '2026-07-22T11:26:22.447419Z',
+        })
+
+        # Stored as JSON TEXT, not a raw dict bind.
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            'SELECT "modes" FROM steps WHERE "id" = ?', (step_id,)).fetchone()
+        conn.close()
+        assert json.loads(row[0]) == {'model': 'glm-5.2-short', 'reasoning': 'low'}
+
+        # The step is actually persisted and readable — the point of the fix
+        # is that the message stops vanishing from the history DB.
+        step = await layer.get_step(step_id)
+        assert step['output'] == 'test hello'
+
+        thread = await layer.get_thread(thread_id)
+        assert [s['output'] for s in thread['steps']] == ['test hello']
+
+        # `modes` is write-only in this Chainlit version — its read queries
+        # never SELECT the column. _coerce_json_fields covers it anyway, so
+        # whenever it DOES come back it must be a dict, never a JSON string.
+        for source in (step, thread['steps'][0]):
+            assert not isinstance(source.get('modes'), str)
+
+        # A step without modes still works (the missing-key path).
+        bare_id = str(uuid.uuid4())
+        await create_step(layer, {
+            'id': bare_id,
+            'threadId': thread_id,
+            'name': 'assistant',
+            'type': 'assistant_message',
+            'streaming': False,
+            'output': 'hi',
+            'createdAt': '2026-07-22T11:26:23.000000Z',
+        })
+        assert (await layer.get_step(bare_id))['output'] == 'hi'
+
+    asyncio.run(scenario())
+
+
+def test_empty_modes_does_not_clobber_stored_modes(tmp_path):
+    """Upstream drops empty-dict parameters before building the statement, so
+    the column is omitted and the ON CONFLICT UPDATE keeps what is stored.
+    Serializing {} to '{}' here would overwrite a real value on the next
+    update of the same step id."""
+    db_path = str(tmp_path / 'chainlit.db')
+    layer = build_data_layer(db_path)
+
+    async def scenario():
+        user = await layer.create_user(User(identifier='owner'))
+        thread_id = str(uuid.uuid4())
+        await layer.update_thread(thread_id, name='t', user_id=user.id)
+
+        create_step = type(layer).create_step.__wrapped__
+        step_id = str(uuid.uuid4())
+        base = {
+            'id': step_id, 'threadId': thread_id, 'name': 'owner',
+            'type': 'user_message', 'streaming': False,
+            'createdAt': '2026-07-22T11:26:22.447419Z',
+        }
+        await create_step(layer, dict(base, output='v1',
+                                      modes={'model': 'glm-5.2-short'}))
+        # Same step re-upserted with an empty modes dict.
+        await create_step(layer, dict(base, output='v2', modes={}))
+
+        assert (await layer.get_step(step_id))['output'] == 'v2'
+
+        # Read the column directly — upstream's SELECTs do not include `modes`.
+        conn = sqlite3.connect(db_path)
+        stored = conn.execute(
+            'SELECT "modes" FROM steps WHERE "id" = ?', (step_id,)).fetchone()[0]
+        conn.close()
+        assert json.loads(stored) == {'model': 'glm-5.2-short'}
+
+    asyncio.run(scenario())
+
+
+def test_ensure_schema_adds_modes_to_legacy_steps_table(tmp_path):
+    """A chainlit.db created before `modes` joined SCHEMA has no such column;
+    CREATE TABLE IF NOT EXISTS cannot evolve it, so ensure_schema must."""
+    db_path = str(tmp_path / 'chainlit.db')
+    conn = sqlite3.connect(db_path)
+    conn.executescript('''
+        CREATE TABLE users (id TEXT PRIMARY KEY);
+        CREATE TABLE threads (id TEXT PRIMARY KEY);
+        CREATE TABLE steps (
+            id TEXT PRIMARY KEY, name TEXT, type TEXT, threadId TEXT,
+            streaming BOOLEAN, metadata TEXT, tags TEXT, output TEXT,
+            createdAt TEXT
+        );
+        CREATE TABLE elements (id TEXT PRIMARY KEY);
+        CREATE TABLE feedbacks (id TEXT PRIMARY KEY);
+    ''')
+    conn.commit()
+    conn.close()
+
+    def columns():
+        c = sqlite3.connect(db_path)
+        cols = [r[1] for r in c.execute('PRAGMA table_info(steps)')]
+        c.close()
+        return cols
+
+    assert 'modes' not in columns()  # pre-fix baseline
+    ensure_schema(db_path)
+    assert 'modes' in columns()
+    ensure_schema(db_path)  # idempotent
+    assert 'modes' in columns()
+
+
 def test_data_layer_full_thread_lifecycle(tmp_path):
     db_path = str(tmp_path / 'chainlit.db')
     layer = build_data_layer(db_path)

@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS feedbacks (
 # 2.10.0 / stabilized in 2.11.0 with no schema-migration note).
 STEPS_ADDITIVE_COLUMNS = [
     ("autoCollapse", "BOOLEAN"),
+    # 2.11's mode selector (model + reasoning per message). Present in SCHEMA
+    # above, so only DBs created before it landed need the ALTER.
+    ("modes", "TEXT"),
 ]
 
 
@@ -124,25 +127,42 @@ def ensure_schema(db_path: str):
         conn.close()
 
 
-def _coerce_tags(obj):
-    """Deserialize the SQLite TEXT `tags` column back to a list for the
-    Chainlit dict API.
+# Columns that are native structured types on Postgres (array / JSONB) but
+# plain TEXT on SQLite, and that upstream does NOT serialize itself. Upstream
+# json.dumps()es only `metadata` and `generation` (sql_alchemy.create_step);
+# everything else is bound verbatim, and aiosqlite refuses to bind a Python
+# list/dict ("type 'dict' is not supported"). Each entry here is JSON-encoded
+# on write and decoded on read.
+#
+#   tags   — list, threads + steps
+#   modes  — dict, steps (chat profile modes: model + reasoning). Added by
+#            Chainlit 2.11's mode selector; hit us as a hard write failure that
+#            silently dropped every user_message from the history DB.
+#
+# When a Chainlit upgrade adds another structured step field, it belongs here.
+JSON_TEXT_FIELDS = ('tags', 'modes')
 
-    Chainlit's SQLAlchemyDataLayer is written for Postgres, where `tags` is
-    a native array column — written as a Python list, read back as a list.
-    On SQLite we store that list as a JSON TEXT string (see
+
+def _coerce_json_fields(obj):
+    """Deserialize the SQLite TEXT columns in `JSON_TEXT_FIELDS` back to the
+    list/dict the Chainlit dict API expects.
+
+    Chainlit's SQLAlchemyDataLayer is written for Postgres, where these are
+    native array/JSONB columns — written as a Python list/dict, read back as
+    one. On SQLite we store them as JSON TEXT (see
     `SimplerSQLiteDataLayer.update_thread`/`create_step`), so we must undo
     that on every read path that returns a ThreadDict/StepDict to Chainlit
-    or the UI. Safe on None, missing key, or already-list values.
+    or the UI. Safe on None, missing keys, or already-decoded values.
     """
     if not obj or not isinstance(obj, dict):
         return obj
-    raw = obj.get('tags')
-    if isinstance(raw, str):
-        try:
-            obj['tags'] = json.loads(raw)
-        except json.JSONDecodeError:
-            pass  # leave untouched if it isn't JSON we wrote
+    for field in JSON_TEXT_FIELDS:
+        raw = obj.get(field)
+        if isinstance(raw, str):
+            try:
+                obj[field] = json.loads(raw)
+            except json.JSONDecodeError:
+                pass  # leave untouched if it isn't JSON we wrote
     return obj
 
 
@@ -151,17 +171,25 @@ class SimplerSQLiteDataLayer(SQLAlchemyDataLayer):
 
     Two translation problems exist because upstream targets Postgres:
 
-    1. `threads.tags` / `steps.tags` are array columns on Postgres but TEXT
-       on SQLite; upstream writes the raw Python list verbatim, which aiosqlite
-       refuses to bind (`InterfaceError: unsupported type`).
-    2. Reading that TEXT back yields a JSON string instead of the list the
-       Chainlit dict API (and the UI) expects.
+    1. Structured columns (`tags` on threads + steps, `modes` on steps) are
+       native array/JSONB on Postgres but TEXT on SQLite; upstream binds the
+       raw Python list/dict verbatim, which aiosqlite refuses
+       (`InterfaceError: unsupported type` / `ProgrammingError: type 'dict'
+       is not supported`). Upstream only json.dumps()es `metadata` and
+       `generation` — see `JSON_TEXT_FIELDS`.
+    2. Reading that TEXT back yields a JSON string instead of the list/dict
+       the Chainlit dict API (and the UI) expects.
 
-    This subclass fixes both at the object/parameter seam — JSON-serialize
-    list `tags` before delegating the write, JSON-deserialize `tags` after
+    This subclass fixes both at the object/parameter seam — JSON-serialize the
+    `JSON_TEXT_FIELDS` before delegating the write, JSON-deserialize them after
     delegating the read — so all actual SQL stays upstream and we are immune
     to method-body drift in future Chainlit versions. When the chat DB moves
     to Postgres this whole class goes away.
+
+    Failure mode when a field is missing from `JSON_TEXT_FIELDS`: the write
+    raises inside Chainlit's persistence path, the message never lands in the
+    history DB, and the chat keeps working — so the loss is silent until a
+    thread is resumed and turns out to be empty.
     """
 
     async def update_thread(self, thread_id, name=None, user_id=None,
@@ -181,45 +209,50 @@ class SimplerSQLiteDataLayer(SQLAlchemyDataLayer):
         # We then delegate to the upstream UNWRAPPED body to avoid
         # double-queueing → SQLAlchemyDataLayer.create_step.__wrapped__.
         prepared = dict(step_dict)
-        t = prepared.get('tags')
-        if isinstance(t, list):
-            prepared['tags'] = json.dumps(t)
+        for field in JSON_TEXT_FIELDS:
+            value = prepared.get(field)
+            # An EMPTY dict is left alone on purpose: upstream drops empty-dict
+            # parameters before building the statement, so the column is
+            # omitted and the ON CONFLICT UPDATE keeps whatever is already
+            # stored. Serializing it to '{}' here would clobber that.
+            if isinstance(value, list) or (isinstance(value, dict) and value):
+                prepared[field] = json.dumps(value)
         return await SQLAlchemyDataLayer.create_step.__wrapped__(
             self, prepared)
 
     async def get_thread(self, thread_id):
         thread = await super().get_thread(thread_id)
         if thread is not None:
-            _coerce_tags(thread)
+            _coerce_json_fields(thread)
             for step in thread.get('steps', []) or []:
-                _coerce_tags(step)
+                _coerce_json_fields(step)
         return thread
 
     async def list_threads(self, pagination, filters):
         result = await super().list_threads(pagination, filters)
         for thread in (result.data or []):
-            _coerce_tags(thread)
+            _coerce_json_fields(thread)
             for step in thread.get('steps', []) or []:
-                _coerce_tags(step)
+                _coerce_json_fields(step)
         return result
 
     async def get_all_user_threads(self, user_id=None, thread_id=None):
         threads = await super().get_all_user_threads(
             user_id=user_id, thread_id=thread_id)
         for thread in threads or []:
-            _coerce_tags(thread)
+            _coerce_json_fields(thread)
             for step in thread.get('steps', []) or []:
-                _coerce_tags(step)
+                _coerce_json_fields(step)
         return threads
 
     async def get_step(self, step_id):
         step = await super().get_step(step_id)
-        return _coerce_tags(step) if step is not None else step
+        return _coerce_json_fields(step) if step is not None else step
 
     async def get_favorite_steps(self, user_id):
         steps = await super().get_favorite_steps(user_id)
         for step in steps or []:
-            _coerce_tags(step)
+            _coerce_json_fields(step)
         return steps
 
 

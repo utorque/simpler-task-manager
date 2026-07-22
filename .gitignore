@@ -2,6 +2,7 @@
 __pycache__/
 instance/
 .env
+.env.bak*
 *.db
 *.sqlite
 venv/

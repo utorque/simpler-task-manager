@@ -310,9 +310,21 @@ async def build_system_prompt_layers(toolbox=None, spaces=None) -> list[dict]:
         layers.append({'kind': 'spaces_guidance', 'sources': shown,
                        'text': workspace.format_spaces_guidance(spaces, selected)})
     elif not simpler_client.configured():
+        # State the ONE real remedy. Told only that the token is unset, models
+        # invent plausible-but-nonexistent fix paths ("Settings → API Token",
+        # "connect the desktop app") and send the user hunting through a UI
+        # that has no such screen.
         layers.append({'kind': 'spaces_guidance', 'sources': [],
                        'text': '(Workspace access is not configured: API_TOKEN '
-                               'unset — you cannot see tasks/notes/spaces.)'})
+                               'unset — you cannot see or change tasks, notes '
+                               'or spaces, and every workspace tool will fail. '
+                               'The ONLY fix is server-side: set API_TOKEN in '
+                               'the .env file next to docker-compose.yml '
+                               '(generate one with `openssl rand -hex 32`) and '
+                               'restart with `docker compose up -d`. There is '
+                               'no in-app settings screen for this — do not '
+                               'invent one, and do not ask which client the '
+                               'user is on.)'})
 
     tool_names = [spec['name'] for spec in toolbox.specs()] if toolbox else []
     if tool_names:

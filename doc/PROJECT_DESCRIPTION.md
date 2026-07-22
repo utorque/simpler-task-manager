@@ -294,18 +294,23 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 `migrate_db.py` (repo root) is the supported migration path — no Alembic. Standalone (stdlib-only: `sqlite3` + `shutil`), so it can be copied to the server and run without the app's dependencies. It:
 
 1. **Backs up** the DB first (`tasks.db.bak-<timestamp>` alongside the file).
-2. Applies **additive, idempotent DDL** (currently: the `subtasks` table + index, and the `tasks.note_id` column; safe to re-run).
+2. Applies the **additive schema diff**: CREATE missing tables + indexes, ALTER TABLE ADD COLUMN for columns present in `SCHEMA` but absent from the file. Never drops anything.
+3. Runs **idempotent data fixups** (`DATA_FIXUPS`): guarded UPDATEs backfilling new/canonical columns from legacy ones (`tasks.space_id` from the legacy `space` name, `tasks.status` from `completed`, `tasks.completed_at` from `updated_at`, `change_logs.actor`). Each only touches rows where the target is still unset.
+4. **Verifies** the final schema and fails loudly (backup untouched) if anything is still missing.
 
 ```bash
-python3 migrate_db.py                    # default: ./instance/tasks.db
-python3 migrate_db.py path/to/tasks.db
+python3 migrate_db.py --dry-run             # print the plan, write nothing
+python3 migrate_db.py --yes                 # apply without the confirmation prompt
+python3 migrate_db.py --db path/to/tasks.db # default: ./instance/tasks.db
 ```
 
-Run it after pulling code that changes `models.py`, before `docker compose up`.
+**Run it after pulling code that changes `models.py`, before `docker compose up`** — nothing in the Dockerfile or compose file migrates automatically. `db.create_all()` (called at app startup) creates missing *tables* only; it will **never** add a column to a table that already exists, so a schema change without this script surfaces as a runtime `no such column: …` 500.
+
+The script's `SCHEMA` is a hand-written mirror of `src/models.py` — the price of staying dependency-free. `tests/test_migrate_db.py` is the drift guard: it fails if a model table/column has no counterpart in `SCHEMA` (or vice versa), and end-to-end-migrates a pre-kanban DB shape. When you add a column that needs a backfill, add the `SCHEMA` entry **and** a guarded UPDATE to `DATA_FIXUPS` in the same change.
 
 ## Testing
 
-`pytest` (159 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB. The MCP sidecar's tools are tested in-process (`tests/test_mcp_tools.py`): its httpx client is swapped for an `httpx.WSGITransport` pointed at the Flask test app, so every tool exercises the real routes through the bearer-token path (`tests/test_api_token_auth.py` covers the auth seam itself).
+`pytest` (322 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB. The MCP sidecar's tools are tested in-process (`tests/test_mcp_tools.py`): its httpx client is swapped for an `httpx.WSGITransport` pointed at the Flask test app, so every tool exercises the real routes through the bearer-token path (`tests/test_api_token_auth.py` covers the auth seam itself).
 
 ```bash
 python -m pytest -q
@@ -322,6 +327,16 @@ Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remembe
 **Embedded assistant (built in)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `sandbox` (the assistant's isolated execution sidecar, internal network + shared `/workspace` volume). The Chainlit assistant itself runs inside the `web` container (`asgi.py` mounts it same-origin at `/assistant`), gated by the normal login via a session-cookie auth bridge. Set `API_TOKEN` (`openssl rand -hex 32`) to give it workspace access — **walkthrough: `doc/setup-assistant.md`**.
 
 ## Version History
+
+**2026-07 — chat history: `steps.modes` write failure**:
+- ✅ Fixed `sqlite3.ProgrammingError: Error binding parameter 4: type 'dict' is not supported` — Chainlit 2.11's mode selector attaches a `modes` dict to every user_message, and upstream json.dumps()es only `metadata` / `generation`, so the raw dict was bound to our TEXT column. The write raised inside the persistence path, so chat kept working while **every user message was silently lost from the history DB**
+- ✅ `chat/data_layer.py`: the `tags` shim generalized to `JSON_TEXT_FIELDS = ('tags', 'modes')` — the list of Postgres-native columns upstream does not serialize itself; empty dicts left alone so upstream's ON CONFLICT column-omission still protects stored values. `modes` added to `STEPS_ADDITIVE_COLUMNS` for DBs created before it joined the schema
+
+**2026-07 — migrate_db.py restored to a schema reconciler**:
+- ✅ Fixed `no such column: tasks.status` on DBs predating the kanban workflow: the earlier rewrite of `migrate_db.py` into a hand-listed two-step script had dropped the `status` / `completed_at` / `actor` migrations and every data fixup, leaving no supported way forward for an existing DB
+- ✅ Back to a full additive reconciler (declarative `SCHEMA` mirroring `models.py` + `DATA_FIXUPS` + post-run verification), still stdlib-only; `--dry-run` / `--yes` / `--db` flags restored to match the documented usage
+- ✅ `tests/test_migrate_db.py` drift guard: fails when `models.py` and `SCHEMA` disagree in either direction, so a migration can no longer be silently lost
+- ✅ `Subtask.task_id` marked `index=True` so fresh DBs get `ix_subtasks_task_id` too (previously only migrated DBs had it)
 
 **2026-07 — Embedded Chainlit assistant (replaces the Hermes integration)**:
 - ✅ First-party Chainlit app (`chat/`) mounted same-origin at `/assistant` by the new `asgi.py` entrypoint (FastAPI umbrella: Chainlit ASGI + Flask via a2wsgi); Hermes webui container + `/hermes-ui/` proxy removed
