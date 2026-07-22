@@ -11,6 +11,7 @@ without Chainlit's runtime.
 
 import json
 import os
+import re
 
 from chat import settings
 
@@ -48,16 +49,73 @@ def reset_system_prompt():
         pass
 
 
-def load_system_prompt() -> str:
-    """The base system prompt text — instance override when present, else
-    the shipped default. Called PER MESSAGE (never cached module-globally)
-    so in-app edits take effect on the next turn."""
+def read_system_prompt_source() -> str:
+    """The prompt file VERBATIM, conditional markers included — what the
+    settings-panel editor loads and writes back. Never feed this to the
+    model; go through `load_system_prompt` so the markers get resolved."""
     try:
         with open(system_prompt_path(), encoding='utf-8') as f:
             return f.read()
     except (FileNotFoundError, OSError):
         return ('You are the built-in assistant of Simpler, a personal '
                 'task/notes workspace.')
+
+
+def load_system_prompt(simpler: bool = True) -> str:
+    """The base system prompt as the model should receive it — instance
+    override when present, else the shipped default. Called PER MESSAGE
+    (never cached module-globally) so in-app edits take effect on the next
+    turn.
+
+    `simpler=False` (chat-bar Context picker on *Generic*) drops the
+    workspace-only sections — see `select_prompt_sections`."""
+    return select_prompt_sections(read_system_prompt_source(), simpler)
+
+
+# --- Conditional prompt sections ---------------------------------------------
+# One editable prompt file, two audiences. Blocks fenced by HTML comments are
+# kept or dropped depending on the Context mode, so the user still edits ONE
+# system.md in the settings panel (no second file, no second override path).
+
+SIMPLER_BLOCK = ('simpler:start', 'simpler:end')
+GENERIC_BLOCK = ('generic:start', 'generic:end')
+
+
+def _strip_blocks(text: str, markers: tuple[str, str]) -> str:
+    """Drop every `<!-- start -->` … `<!-- end -->` block, marker lines
+    included. An unclosed opener drops the rest of the file (fail closed:
+    better a short prompt than a leaked section)."""
+    open_marker, close_marker = markers
+    kept, skipping = [], False
+    for line in text.splitlines():
+        probe = line.strip()
+        if not skipping and probe.startswith('<!--') and open_marker in probe:
+            skipping = True
+            continue
+        if skipping:
+            if probe.endswith('-->') and close_marker in probe:
+                skipping = False
+            continue
+        kept.append(line)
+    return '\n'.join(kept)
+
+
+def select_prompt_sections(text: str, simpler: bool = True) -> str:
+    """Resolve the conditional blocks for one Context mode, then collapse the
+    blank runs the removals leave behind. A prompt with no markers (any older
+    instance override) comes back unchanged in Simpler mode.
+
+    Surviving HTML comments are dropped too — they are notes to whoever edits
+    the prompt (starting with the marker legend at the top of system.md), and
+    the model should not pay for them."""
+    text = _strip_blocks(text, GENERIC_BLOCK if simpler else SIMPLER_BLOCK)
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
+    lines, out = text.splitlines(), []
+    for line in lines:
+        if not line.strip() and out and not out[-1].strip():
+            continue
+        out.append(line)
+    return '\n'.join(out).strip()
 
 
 # ===== Model list (Bundle A) ==================================================

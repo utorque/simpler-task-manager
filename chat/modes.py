@@ -57,3 +57,43 @@ def current_reasoning_from_modes(modes: dict | None, default: str) -> str:
     if not modes:
         return default
     return modes.get(REASONING_MODE_ID) or default
+
+
+CONTEXT_MODE_ID = 'context'
+CONTEXT_SIMPLER = 'simpler'
+CONTEXT_GENERIC = 'generic'
+
+
+def build_context_mode_options() -> list[dict]:
+    """The Simpler-context switch: 'Simpler' (default) wires the workspace in
+    — sidecar tools, spaces guidance, the workspace half of the system prompt,
+    the workspace slash commands. 'Generic' strips all of it for a plain chat
+    that doesn't pay those tokens; the general tools (sandbox, skills, files,
+    web search) stay in both."""
+    return [
+        {
+            'id': CONTEXT_SIMPLER,
+            'name': 'Simpler',
+            'description': 'Full workspace context: tasks, notes, spaces and '
+                           'their tools.',
+            'icon': 'puzzle',
+            'default': True,
+        },
+        {
+            'id': CONTEXT_GENERIC,
+            'name': 'Generic',
+            'description': 'Plain chat — no workspace tools, spaces or prompt '
+                           'sections. Sandbox, skills and files stay.',
+            'icon': 'message-circle',
+            'default': False,
+        },
+    ]
+
+
+def simpler_context_enabled(modes: dict | None) -> bool:
+    """Whether this message runs with the Simpler workspace wired in.
+    Anything but an explicit 'generic' means yes — an unset/unknown value
+    (pre-Modes threads, older clients) keeps the historical behavior."""
+    if not modes:
+        return True
+    return modes.get(CONTEXT_MODE_ID) != CONTEXT_GENERIC

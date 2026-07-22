@@ -82,10 +82,15 @@ def test_delete_system_prompt_resets_to_shipped(sclient, instance_root):
 
 
 def test_get_system_prompt_reflects_shipped(sclient):
+    """The editor gets the file VERBATIM — markers and all. It PUTs this same
+    text back, so serving a Context-resolved prompt would delete one flavour
+    on the first save."""
     shipped = open(assistant_settings.shipped_system_prompt_path(),
                    encoding='utf-8').read()
     response = sclient.get('/api/assistant/settings')
-    assert response.get_json()['system_prompt']['body'] == shipped
+    body = response.get_json()['system_prompt']['body']
+    assert body == shipped
+    assert '<!-- simpler:start -->' in body
 
 
 def test_post_skill_create_calls_skill_function(sclient, instance_root):

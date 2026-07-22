@@ -28,6 +28,14 @@ COMMANDS = [
      'description': 'Load a skill (reusable instructions) into the conversation'},
 ]
 
+# The subset that still makes sense with the workspace switched off (chat-bar
+# Context picker on *Generic*): skills are domain-agnostic, the injectors are
+# not. Kept as a filter over COMMANDS so a new command can't silently miss it.
+GENERIC_COMMAND_IDS = {'skill'}
+GENERIC_COMMANDS = [c for c in COMMANDS if c['id'] in GENERIC_COMMAND_IDS]
+WORKSPACE_COMMAND_IDS = {c['id'] for c in COMMANDS
+                         if c['id'] not in GENERIC_COMMAND_IDS}
+
 
 async def task_context_block(task: dict) -> str:
     """Format one task, fetching its linked note (house rule: an injected

@@ -40,8 +40,11 @@ def test_build_system_prompt_reads_instance_override(instance_root):
 
 
 def test_build_system_prompt_falls_back_to_shipped(instance_root):
-    shipped = open(assistant_settings.shipped_system_prompt_path(),
-                   encoding='utf-8').read()
+    # The shipped file carries conditional markers (see
+    # test_chat_context_mode.py); compare against its resolved Simpler form.
+    shipped = assistant_settings.select_prompt_sections(
+        open(assistant_settings.shipped_system_prompt_path(),
+             encoding='utf-8').read(), simpler=True)
     prompt = run(chainlit_app.build_system_prompt(toolbox=None))
     assert prompt.startswith(shipped.strip()[:40])
 

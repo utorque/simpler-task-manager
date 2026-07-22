@@ -665,6 +665,7 @@
                         </div>
                         <div class="tab-pane fade" id="astab-prompt">
                             <p class="text-muted small mb-2">The editable base system prompt (identity, vocabulary, style). Per-turn context — date, space guidance, tools, skills — is layered on top automatically (see Composition). Edits are live on the next message.</p>
+                            <p class="text-muted small mb-2">Sections between <code>&lt;!-- simpler:start --&gt;</code> and <code>&lt;!-- simpler:end --&gt;</code> are sent only when the chat-bar <strong>Context</strong> picker is on <em>Simpler</em>; <code>generic:start</code>/<code>generic:end</code> only on <em>Generic</em>. Everything else always goes. HTML comments are stripped before the model sees the prompt.</p>
                             <div class="mb-2 small" id="assistantPromptSource"></div>
                             <textarea class="form-control font-monospace mb-2" id="assistantPromptBody" rows="18"></textarea>
                             <button class="btn btn-sm btn-primary" id="assistantPromptSave">Save</button>

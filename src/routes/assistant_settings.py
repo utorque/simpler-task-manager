@@ -33,7 +33,10 @@ def _system_prompt_state(include_body: bool = True) -> dict:
     state = {'source': 'instance' if is_override else 'bundled',
              'last_modified': last_modified}
     if include_body:
-        state['body'] = assistant_settings.load_system_prompt()
+        # Verbatim, conditional markers intact: the editor round-trips this
+        # text back through PUT, so a resolved prompt would silently delete
+        # whichever flavour the current Context mode drops.
+        state['body'] = assistant_settings.read_system_prompt_source()
     return state
 
 

@@ -74,6 +74,9 @@ def build_chat_modes() -> list[cl.Mode]:
                 options=[cl.ModeOption(**opt) for opt in model_options]),
         cl.Mode(id=modes.REASONING_MODE_ID, name='Reasoning',
                 options=[cl.ModeOption(**opt) for opt in reasoning_options]),
+        cl.Mode(id=modes.CONTEXT_MODE_ID, name='Context',
+                options=[cl.ModeOption(**opt)
+                         for opt in modes.build_context_mode_options()]),
     ]
 
 
@@ -142,9 +145,19 @@ def add_native_tools(toolbox: Toolbox, attach_queue: list | None = None):
         sandbox_tools.register(toolbox, settings.files_dir())
 
 
-async def build_toolbox(attach_queue: list | None = None) -> Toolbox:
+SIMPLER_SERVER_NAME = 'simpler'
+
+
+async def build_toolbox(attach_queue: list | None = None,
+                        simpler: bool = True) -> Toolbox:
+    """The tool table for one turn. `simpler=False` (Context picker on
+    *Generic*) leaves the Simpler sidecar out — that is the ~26-spec bulk of
+    the tool payload. Everything else (sandbox, extra MCP servers, UI-added
+    sessions, natives) is domain-agnostic and stays in both modes."""
     toolbox = Toolbox()
     for server in preintegrated_servers():
+        if not simpler and server.name == SIMPLER_SERVER_NAME:
+            continue
         try:
             await toolbox.add_mcp_server(server)
         except Exception as e:
@@ -257,9 +270,15 @@ async def on_pin_task(task_id):
     await inject_and_prefill('task', f"#{task_id} — ")
 
 
-async def register_commands():
-    if simpler_client.configured():
-        await cl.context.emitter.set_commands(commands.COMMANDS)
+async def register_commands(simpler: bool = True):
+    """Publish the composer's slash commands. In Generic mode only the
+    domain-agnostic ones survive (`/skill`) — the workspace injectors would
+    have nothing to talk to. Re-published per message, so flipping the
+    Context picker updates the composer from the next turn on."""
+    if not simpler_client.configured():
+        return
+    await cl.context.emitter.set_commands(
+        commands.COMMANDS if simpler else commands.GENERIC_COMMANDS)
 
 
 # ===== Conversation ===========================================================
@@ -284,7 +303,8 @@ async def on_chat_resume(thread):
     await publish_modes()
 
 
-async def build_system_prompt_layers(toolbox=None, spaces=None) -> list[dict]:
+async def build_system_prompt_layers(toolbox=None, spaces=None,
+                                     simpler: bool = True) -> list[dict]:
     """The system prompt as an ordered list of named layers — the single
     source both `build_system_prompt` (joined text for the model) and the
     settings panel's composition viewer (structured metadata) derive from.
@@ -293,7 +313,11 @@ async def build_system_prompt_layers(toolbox=None, spaces=None) -> list[dict]:
     edited it in-app, else the shipped default) so edits are live — the
     dynamic layers below were always per-turn. Pass pre-fetched `spaces` to
     skip the API round-trip (the Flask composition route reads them straight
-    from the DB — it cannot loop back into its own HTTP server)."""
+    from the DB — it cannot loop back into its own HTTP server).
+
+    `simpler=False` (Context picker on *Generic*) resolves the base prompt to
+    its workspace-free flavour and drops the spaces layer entirely, spaces
+    API call included."""
     base_path = assistant_settings.system_prompt_path()
     is_override = (base_path == assistant_settings.system_prompt_override_path())
     try:
@@ -307,7 +331,7 @@ async def build_system_prompt_layers(toolbox=None, spaces=None) -> list[dict]:
                 + (' (instance override)' if is_override else ' (shipped default)'),
         'source': 'instance' if is_override else 'bundled',
         'last_modified': last_modified,
-        'text': assistant_settings.load_system_prompt(),
+        'text': assistant_settings.load_system_prompt(simpler=simpler),
     }]
 
     now = datetime.now()
@@ -317,35 +341,36 @@ async def build_system_prompt_layers(toolbox=None, spaces=None) -> list[dict]:
                 f"({now.strftime('%A')}).",
     })
 
-    selected = selected_space_ids()
-    if spaces is None and simpler_client.configured():
-        try:
-            spaces = await simpler_client.list_spaces()
-        except SimplerAPIError as e:
+    if simpler:
+        selected = selected_space_ids()
+        if spaces is None and simpler_client.configured():
+            try:
+                spaces = await simpler_client.list_spaces()
+            except SimplerAPIError as e:
+                layers.append({'kind': 'spaces_guidance', 'sources': [],
+                               'text': f'(Workspace API unavailable right now: {e})'})
+        if spaces is not None:
+            shown = [s['name'] for s in spaces
+                     if selected is None or s['id'] in selected] \
+                    or [s['name'] for s in spaces]
+            layers.append({'kind': 'spaces_guidance', 'sources': shown,
+                           'text': workspace.format_spaces_guidance(spaces, selected)})
+        elif not simpler_client.configured():
+            # State the ONE real remedy. Told only that the token is unset, models
+            # invent plausible-but-nonexistent fix paths ("Settings → API Token",
+            # "connect the desktop app") and send the user hunting through a UI
+            # that has no such screen.
             layers.append({'kind': 'spaces_guidance', 'sources': [],
-                           'text': f'(Workspace API unavailable right now: {e})'})
-    if spaces is not None:
-        shown = [s['name'] for s in spaces
-                 if selected is None or s['id'] in selected] \
-                or [s['name'] for s in spaces]
-        layers.append({'kind': 'spaces_guidance', 'sources': shown,
-                       'text': workspace.format_spaces_guidance(spaces, selected)})
-    elif not simpler_client.configured():
-        # State the ONE real remedy. Told only that the token is unset, models
-        # invent plausible-but-nonexistent fix paths ("Settings → API Token",
-        # "connect the desktop app") and send the user hunting through a UI
-        # that has no such screen.
-        layers.append({'kind': 'spaces_guidance', 'sources': [],
-                       'text': '(Workspace access is not configured: API_TOKEN '
-                               'unset — you cannot see or change tasks, notes '
-                               'or spaces, and every workspace tool will fail. '
-                               'The ONLY fix is server-side: set API_TOKEN in '
-                               'the .env file next to docker-compose.yml '
-                               '(generate one with `openssl rand -hex 32`) and '
-                               'restart with `docker compose up -d`. There is '
-                               'no in-app settings screen for this — do not '
-                               'invent one, and do not ask which client the '
-                               'user is on.)'})
+                           'text': '(Workspace access is not configured: API_TOKEN '
+                                   'unset — you cannot see or change tasks, notes '
+                                   'or spaces, and every workspace tool will fail. '
+                                   'The ONLY fix is server-side: set API_TOKEN in '
+                                   'the .env file next to docker-compose.yml '
+                                   '(generate one with `openssl rand -hex 32`) and '
+                                   'restart with `docker compose up -d`. There is '
+                                   'no in-app settings screen for this — do not '
+                                   'invent one, and do not ask which client the '
+                                   'user is on.)'})
 
     tool_names = [spec['name'] for spec in toolbox.specs()] if toolbox else []
     if tool_names:
@@ -369,8 +394,8 @@ async def build_system_prompt_layers(toolbox=None, spaces=None) -> list[dict]:
     return layers
 
 
-async def build_system_prompt(toolbox=None) -> str:
-    layers = await build_system_prompt_layers(toolbox)
+async def build_system_prompt(toolbox=None, simpler: bool = True) -> str:
+    layers = await build_system_prompt_layers(toolbox, simpler=simpler)
     return '\n\n'.join(layer['text'] for layer in layers if layer.get('text'))
 
 
@@ -407,6 +432,19 @@ class UIHooks(AgentHooks):
 
 @cl.on_message
 async def on_message(message: cl.Message):
+    # Chat-bar Context picker: 'Generic' unplugs the whole Simpler layer for
+    # this turn (sidecar tools, spaces, workspace prompt sections, workspace
+    # commands) so a general question doesn't pay for any of it.
+    message_modes = getattr(message, 'modes', None)
+    simpler = modes.simpler_context_enabled(message_modes)
+    await register_commands(simpler)
+
+    if not simpler and message.command in commands.WORKSPACE_COMMAND_IDS:
+        await cl.Message(
+            content='⚠️ `/' + message.command + '` needs the workspace — switch '
+                    'the **Context** picker back to *Simpler*.').send()
+        return
+
     # Attached files land in the thread as a persisted context block (text
     # inlined, everything stored in the assistant's file workspace).
     file_block = files.ingest_elements(message.elements, settings.files_dir())
@@ -431,9 +469,8 @@ async def on_message(message: cl.Message):
     # here and are flushed as download chips after the turn (issue 003.10 —
     # scratch files are no longer auto-surfaced).
     attachments: list[str] = []
-    toolbox = await build_toolbox(attachments)
+    toolbox = await build_toolbox(attachments, simpler=simpler)
 
-    message_modes = getattr(message, 'modes', None)
     model = modes.current_model_from_modes(
         message_modes, default=assistant_settings.available_models()[0])
     reasoning = modes.current_reasoning_from_modes(message_modes, 'medium')
@@ -441,7 +478,7 @@ async def on_message(message: cl.Message):
         await run_agent(
             llm=get_llm(reasoning_effort=reasoning),
             model=model,
-            system=await build_system_prompt(toolbox),
+            system=await build_system_prompt(toolbox, simpler=simpler),
             history=history,
             toolbox=toolbox,
             hooks=UIHooks(),
