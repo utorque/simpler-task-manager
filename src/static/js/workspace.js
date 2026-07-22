@@ -229,8 +229,15 @@
             });
 
             // Drag source (move) — files land on folder rows or the breadcrumb.
+            // The same drag also crosses into the assistant iframe: the
+            // text/plain flavour is the workspace-relative path the model
+            // works with, pasted into the composer by simpler-bridge.js
+            // (folders keep a trailing slash so the intent reads clearly).
             row.addEventListener('dragstart', (event) => {
                 event.dataTransfer.setData('application/x-workspace-path', relPath);
+                event.dataTransfer.setData(
+                    'text/plain', entry.type === 'dir' ? `${relPath}/` : relPath);
+                event.dataTransfer.effectAllowed = 'copyMove';
                 event.stopPropagation();
             });
             if (entry.type === 'dir') {

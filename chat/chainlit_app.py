@@ -184,6 +184,8 @@ async def on_window_message(message):
             cl.user_session.set('space_filter', None)
     elif data.get('type') == 'simpler-starter-click':
         await on_starter_click(data.get('label') or '')
+    elif data.get('type') == 'simpler-pin-task':
+        await on_pin_task(data.get('task_id'))
 
 
 def selected_space_ids() -> list[int] | None:
@@ -217,6 +219,22 @@ async def starters():
             for spec in await build_starter_specs()]
 
 
+async def inject_and_prefill(command: str | None, prefill: str):
+    """Run a command's context injection into the thread (when there is one),
+    then hand the editable seed to the bridge, which writes it into the
+    composer — nothing is sent to the model until the user hits enter."""
+    if command:
+        block, error = await commands.handle_command(
+            command, prefill, selected_space_ids())
+        if error:
+            await cl.Message(content=error).send()
+        elif block:
+            await cl.Message(content=block, type='system_message',
+                             author='Workspace context').send()
+    await cl.send_window_message(
+        {'type': 'simpler-starter-prefill', 'prefill': prefill})
+
+
 async def on_starter_click(label: str):
     """Bridge-intercepted starter click: run the starter's command injection
     (task starters land their /task context block in the thread), then hand
@@ -224,16 +242,19 @@ async def on_starter_click(label: str):
     spec = commands.starter_by_label(label, await build_starter_specs())
     if spec is None:
         return
-    if spec.get('command'):
-        block, error = await commands.handle_command(
-            spec['command'], spec['prefill'], selected_space_ids())
-        if error:
-            await cl.Message(content=error).send()
-        elif block:
-            await cl.Message(content=block, type='system_message',
-                             author='Workspace context').send()
-    await cl.send_window_message(
-        {'type': 'simpler-starter-prefill', 'prefill': spec['prefill']})
+    await inject_and_prefill(spec.get('command'), spec['prefill'])
+
+
+async def on_pin_task(task_id):
+    """The shell's board card robot button (src/static/js/app.js → localStorage
+    → chat/public/simpler-bridge.js): pin one task to the conversation, exactly
+    like clicking its starter — /task block in the thread, composer seeded with
+    the task ref — except it works on a running conversation too."""
+    try:
+        task_id = int(task_id)
+    except (TypeError, ValueError):
+        return
+    await inject_and_prefill('task', f"#{task_id} — ")
 
 
 async def register_commands():

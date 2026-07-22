@@ -32,11 +32,93 @@
         window.postMessage(payload, window.location.origin);
     }
 
-    setInterval(sync, 2000);
+    function tick() {
+        sync();
+        pumpPinnedTask();
+        reloadIfStartersStale();
+    }
+
+    setInterval(tick, 2000);
     if (document.readyState === 'complete') {
-        setTimeout(sync, 500);
+        setTimeout(tick, 500);
     } else {
-        window.addEventListener('load', function () { setTimeout(sync, 500); });
+        window.addEventListener('load', function () { setTimeout(tick, 500); });
+    }
+
+    /* "Work on this with the assistant": the board card's robot button
+     * (src/static/js/app.js) hands a task over through localStorage, then
+     * switches to the Assistant tab.
+     *
+     * localStorage rather than postMessage because the shell lazy-loads this
+     * iframe — the very first pin happens BEFORE this script exists, so the
+     * handoff has to be a value that waits for us, not an event. The key is
+     * read once and removed; the pin is then re-posted every tick until the
+     * backend answers with its prefill (the socket may not be up yet on a
+     * cold iframe), then dropped.
+     *
+     * Backend side: @cl.on_window_message → on_pin_task, same injection the
+     * task starters run. */
+    var pendingPin = null;
+
+    function readPinnedTask() {
+        var raw;
+        try {
+            raw = window.localStorage.getItem('assistantPinnedTask');
+            if (!raw) return;
+            window.localStorage.removeItem('assistantPinnedTask');
+        } catch (e) {
+            return;
+        }
+        var pin;
+        try { pin = JSON.parse(raw); } catch (e) { return; }
+        if (pin && pin.task_id) pendingPin = { task_id: pin.task_id, tries: 0 };
+    }
+
+    function pumpPinnedTask() {
+        readPinnedTask();
+        if (!pendingPin) return;
+        // The composer only exists once the chat session is mounted; posting
+        // before that goes nowhere (nothing relays it to the backend yet).
+        if (!document.getElementById('chat-input')) return;
+        if (pendingPin.tries++ > 5) {
+            pendingPin = null;
+            return;
+        }
+        window.postMessage(JSON.stringify({
+            type: 'simpler-pin-task',
+            task_id: pendingPin.task_id
+        }), window.location.origin);
+    }
+
+    // Same-origin parent writes fire `storage` here: pin without waiting for
+    // the next poll when the iframe is already loaded.
+    window.addEventListener('storage', function (event) {
+        if (event.key === 'assistantPinnedTask') pumpPinnedTask();
+    });
+
+    /* Starters are the tasks in Doing, and Chainlit ships them inside the
+     * config it fetches ONCE per page load — so a board change in the shell
+     * leaves them stale until F5. The shell publishes a revision string of its
+     * Doing set ('assistantStartersRev'); when it moves, reload the iframe —
+     * but only while the welcome screen is up (starters on screen, composer
+     * empty), the one state where a reload costs nothing. Mid-conversation the
+     * starters aren't visible anyway and the next New Chat gets them fresh. */
+    var startersRev = readStartersRev();
+
+    function readStartersRev() {
+        try { return window.localStorage.getItem('assistantStartersRev'); }
+        catch (e) { return null; }
+    }
+
+    function reloadIfStartersStale() {
+        var rev = readStartersRev();
+        if (rev === startersRev) return;
+        startersRev = rev;
+        if (pendingPin) return;                       // a pin is mid-flight
+        if (!document.getElementById('starters')) return;
+        var input = document.getElementById('chat-input');
+        if (input && input.value.trim()) return;      // don't eat a draft
+        window.location.reload();
     }
 
     /* Starter prefill (issue 003.01): starters must not fire-and-send.
@@ -62,15 +144,36 @@
         }), window.location.origin);
     }, true);
 
+    /* The composer is a controlled React textarea: writing `.value`
+     * directly is invisible to React, so go through the native value
+     * setter and fire an `input` event to sync its state. */
+    function writeComposer(input, value, caret) {
+        var setter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+        input.setSelectionRange(caret, caret);
+    }
+
     function setComposerText(text) {
         var input = document.getElementById('chat-input');
         if (!input) return;
-        var setter = Object.getOwnPropertyDescriptor(
-            window.HTMLTextAreaElement.prototype, 'value').set;
-        setter.call(input, text);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.focus();
-        input.setSelectionRange(text.length, text.length);
+        writeComposer(input, text, text.length);
+    }
+
+    function insertComposerText(text) {
+        var input = document.getElementById('chat-input');
+        if (!input) return;
+        var value = input.value || '';
+        var start = input.selectionStart == null ? value.length : input.selectionStart;
+        var end = input.selectionEnd == null ? start : input.selectionEnd;
+        var before = value.slice(0, start);
+        var after = value.slice(end);
+        // Keep the path a standalone token whichever side it lands on.
+        var chunk = (before && !/\s$/.test(before) ? ' ' : '') + text +
+            (after && !/^\s/.test(after) ? ' ' : '');
+        writeComposer(input, before + chunk + after, before.length + chunk.length);
     }
 
     function onPrefillMessage(event) {
@@ -79,8 +182,53 @@
             try { data = JSON.parse(data); } catch (e) { return; }
         }
         if (!data || data.type !== 'simpler-starter-prefill') return;
+        pendingPin = null;   // the backend answered: stop re-posting the pin
         setComposerText(data.prefill || '');
     }
+
+    /* Workspace path drop: the shell's WorkspaceView drawer lives OUTSIDE
+     * this iframe, but a drag started there still dispatches dragover/drop
+     * into a same-origin iframe, and the drag data store is readable on
+     * drop. Chainlit's own dropzone would swallow that drop as a file
+     * upload, so we intercept in the WINDOW CAPTURE phase (ahead of every
+     * React handler) whenever the drag carries the drawer's custom MIME
+     * type, and paste the workspace-relative path into the composer
+     * instead — the model addresses sandbox/workspace files by that path. */
+    var WORKSPACE_MIME = 'application/x-workspace-path';
+    var dragoverTimer = null;
+
+    function carriesWorkspacePath(event) {
+        var types = event.dataTransfer && event.dataTransfer.types;
+        // `types` is a DOMStringList in older engines — no .includes().
+        return !!types && Array.prototype.indexOf.call(types, WORKSPACE_MIME) !== -1;
+    }
+
+    function markDragging(on) {
+        document.body.classList.toggle('simpler-path-dragover', on);
+        if (dragoverTimer) clearTimeout(dragoverTimer);
+        // dragleave/dragend are unreliable across the iframe boundary
+        // (drops that land back in the shell never notify us), so the
+        // highlight expires on its own once dragover stops firing.
+        dragoverTimer = on ? setTimeout(function () { markDragging(false); }, 200) : null;
+    }
+
+    window.addEventListener('dragover', function (event) {
+        if (!carriesWorkspacePath(event)) return;
+        event.preventDefault();            // required for `drop` to fire at all
+        event.stopImmediatePropagation();
+        event.dataTransfer.dropEffect = 'copy';
+        markDragging(true);
+    }, true);
+
+    window.addEventListener('drop', function (event) {
+        if (!carriesWorkspacePath(event)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        markDragging(false);
+        var path = event.dataTransfer.getData('text/plain')
+            || event.dataTransfer.getData(WORKSPACE_MIME);
+        if (path) insertComposerText('`' + path + '`');
+    }, true);
 
     // The backend's send_window_message lands on window.parent when the
     // assistant is iframed by the shell (same-origin), on window itself

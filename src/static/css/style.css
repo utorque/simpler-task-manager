@@ -1191,6 +1191,39 @@ body {
     color: #2d3748;
 }
 
+/* Left of the priority badge: hand this task to the assistant (app.js
+   pinTaskToAssistant). Dim until the card is hovered — it is a shortcut, not
+   part of the card's information. */
+.board-card-assist {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: #cbd5e0;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    /* Third child of a space-between row: the auto margin eats the free space
+       so the button sits against the priority badge, not mid-card. */
+    margin-left: auto;
+    transition: color .15s, background .15s;
+}
+
+.board-card:hover .board-card-assist {
+    color: #718096;
+}
+
+.board-card-assist:hover {
+    color: #667eea;
+    background: #edf2f7;
+}
+
 /* Right column of a board card: priority badge with the add-subtask + below */
 .board-card-side {
     display: flex;

@@ -400,6 +400,13 @@ function wireTaskClickDelegation(containerId, selector) {
                 e.stopPropagation();
                 return;
             }
+            // Robot button: hand the task to the assistant and go there.
+            if (e.target.closest('.board-card-assist')) {
+                e.preventDefault();
+                e.stopPropagation();
+                pinTaskToAssistant(taskId);
+                return;
+            }
             // Note badge: jump to the source note in the Notes destination.
             if (e.target.closest('.board-card-notelink')) {
                 e.preventDefault();
@@ -807,6 +814,40 @@ async function autoSelectDoing() {
 // ('assistantSpaceFilter': JSON array of space ids, or null = all); the
 // assistant iframe is same-origin and reads it via chat/public/simpler-bridge.js.
 
+// The Assistant destination only exists when the chat is mounted
+// (ASSISTANT_URL, see src/config.py) — board cards hide their robot button
+// when it is not.
+function assistantEnabled() {
+    return !!document.getElementById('view-assistant');
+}
+
+// Board card robot button: hand this task over to the assistant.
+// The pin waits in localStorage rather than being posted to the iframe: on the
+// first visit the iframe does not exist yet (lazy-loaded by switchDestination).
+// chat/public/simpler-bridge.js picks it up, the chat backend injects the task
+// (+ its linked note) into the thread and seeds the composer with "#id — ".
+function pinTaskToAssistant(taskId) {
+    if (!assistantEnabled()) return;
+    localStorage.setItem('assistantPinnedTask',
+        JSON.stringify({ task_id: taskId, ts: Date.now() }));
+    switchDestination('assistant');
+}
+
+// The assistant's starters are the tasks in Doing, and the embedded Chainlit
+// only ships them in the config it fetches once per page load. Publishing a
+// revision of that set lets the bridge notice a board change and refresh the
+// iframe by itself — no F5 — while the welcome screen is up.
+function publishAssistantStartersRev() {
+    if (!assistantEnabled()) return;
+    const rev = tasks.filter(t => t.status === 'doing')
+        .map(t => `${t.id}:${t.title || ''}`)
+        .sort()
+        .join('|');
+    if (localStorage.getItem('assistantStartersRev') !== rev) {
+        localStorage.setItem('assistantStartersRev', rev);
+    }
+}
+
 function getAssistantSpaceFilter() {
     try {
         const raw = localStorage.getItem('assistantSpaceFilter');
@@ -985,6 +1026,8 @@ function renderBoardCard(task) {
              data-task-id="${task.id}">
             <div class="board-card-top">
                 <div class="board-card-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title || '(untitled)')}</div>
+                ${assistantEnabled() ? `<button type="button" class="board-card-assist"
+                        title="Work on this with the assistant"><i class="fas fa-robot"></i></button>` : ''}
                 <div class="board-card-side">
                     <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
                     <button type="button" class="board-card-addsub" title="Add subtask">+</button>
@@ -1244,6 +1287,7 @@ function initSortable() {
 async function loadTasks() {
     const response = await fetch('/api/tasks?include_completed=true');
     tasks = await response.json();
+    publishAssistantStartersRev();
     renderAll();
 }
 

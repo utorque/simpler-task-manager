@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 48" width="200" height="48"
+     role="img" aria-label="Simpler">
+  <!-- Simpler wordmark for the embedded assistant. Chainlit serves
+       {app_root}/public/logo_{theme}.* from GET /logo, which is what the
+       header and the welcome screen render — this replaces the Chainlit
+       logo. The bolt mirrors the shell navbar's fa-bolt brand mark
+       (src/templates/index.html), drawn as a path so no icon font is needed. -->
+  <path d="M26 4 L10 26 h11 l-3 18 L36 21 H24 z" fill="#667eea"/>
+  <text x="44" y="34" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="26" font-weight="700" fill="#2d3748">Simpler</text>
+</svg>
