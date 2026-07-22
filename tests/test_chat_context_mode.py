@@ -120,7 +120,7 @@ def test_shipped_prompt_has_both_flavours():
     assert 'Injected context' in simpler and 'Injected context' not in generic
     assert 'Context' in generic  # tells the model how to get the workspace back
     # Domain-agnostic sections survive both.
-    for keep in ('sandbox__*', 'Delivering files', 'attach_file_to_answer'):
+    for keep in ('sandbox__*', 'Delivering files', 'get_file_link'):
         assert keep in simpler and keep in generic
 
 
@@ -190,7 +190,7 @@ def test_generic_toolbox_drops_only_the_simpler_sidecar(fake_servers, instance_r
     assert 'simpler__list_tasks' not in names
     assert 'sandbox__run_python' in names
     assert 'extra__do_thing' in names
-    assert any(n == 'attach_file_to_answer' for n in names)  # natives stay
+    assert any(n == 'get_file_link' for n in names)  # natives stay
     assert any(n.startswith('load_skill') or 'skill' in n for n in names)
 
 

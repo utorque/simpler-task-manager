@@ -135,12 +135,11 @@ async def on_mcp_disconnect(name: str, session):
     cl.user_session.set('mcp_sessions', sessions)
 
 
-def add_native_tools(toolbox: Toolbox, attach_queue: list | None = None):
+def add_native_tools(toolbox: Toolbox):
     if settings.web_tools_enabled():
         web_tools.register(toolbox)
     skills.register(toolbox)
-    files.register(toolbox, settings.files_dir(),
-                   attach_queue if attach_queue is not None else [])
+    files.register(toolbox, settings.files_dir())
     if not settings.sandbox_mcp_url() and settings.local_sandbox_enabled():
         sandbox_tools.register(toolbox, settings.files_dir())
 
@@ -148,8 +147,7 @@ def add_native_tools(toolbox: Toolbox, attach_queue: list | None = None):
 SIMPLER_SERVER_NAME = 'simpler'
 
 
-async def build_toolbox(attach_queue: list | None = None,
-                        simpler: bool = True) -> Toolbox:
+async def build_toolbox(simpler: bool = True) -> Toolbox:
     """The tool table for one turn. `simpler=False` (Context picker on
     *Generic*) leaves the Simpler sidecar out — that is the ~26-spec bulk of
     the tool payload. Everything else (sandbox, extra MCP servers, UI-added
@@ -171,7 +169,7 @@ async def build_toolbox(attach_queue: list | None = None,
         mcp_sessions = {}
     for name, entry in mcp_sessions.items():
         toolbox.add_mcp_session(name, entry['session'], entry['specs'])
-    add_native_tools(toolbox, attach_queue)
+    add_native_tools(toolbox)
     return toolbox
 
 
@@ -465,11 +463,9 @@ async def on_message(message: cl.Message):
                              author='Workspace context').send()
 
     history = cl.chat_context.to_openai()
-    # Files the model explicitly delivers via attach_file_to_answer collect
-    # here and are flushed as download chips after the turn (issue 003.10 —
-    # scratch files are no longer auto-surfaced).
-    attachments: list[str] = []
-    toolbox = await build_toolbox(attachments, simpler=simpler)
+    # The model delivers files by link (get_file_link) embedded in its reply —
+    # no post-turn attachment flush, and scratch files are never auto-surfaced.
+    toolbox = await build_toolbox(simpler=simpler)
 
     model = modes.current_model_from_modes(
         message_modes, default=assistant_settings.available_models()[0])
@@ -487,11 +483,3 @@ async def on_message(message: cl.Message):
     except Exception as e:  # surface provider errors in-chat, don't crash the session
         await cl.Message(content=f'❌ Provider error: {e}').send()
         return
-
-    if attachments:
-        await cl.Message(
-            content='📁 Attached: ' + ', '.join(os.path.basename(path)
-                                                for path in attachments),
-            elements=[cl.File(name=os.path.basename(path), path=path)
-                      for path in attachments],
-        ).send()
