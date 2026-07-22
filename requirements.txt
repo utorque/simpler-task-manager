@@ -15,3 +15,11 @@ cryptography>=41.0.0
 # (the sidecar's own image installs from mcp_server/requirements.txt).
 mcp>=1.9.0
 httpx>=0.27.0
+# Embedded assistant (chat/ + asgi.py): Chainlit UI, async SQLite for the
+# chat-history data layer, WSGI adapter to run Flask under uvicorn.
+chainlit==2.11.1
+aiosqlite>=0.20.0
+a2wsgi>=1.10.0
+uvicorn>=0.30.0
+# assistant web_search tool (DuckDuckGo, no API key)
+ddgs>=9.0.0

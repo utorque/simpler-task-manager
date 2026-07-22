@@ -131,7 +131,8 @@ class Subtask(db.Model):
     __tablename__ = 'subtasks'
 
     id = db.Column(db.Integer, primary_key=True)
-    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id', ondelete='CASCADE'), nullable=False)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id', ondelete='CASCADE'),
+                        nullable=False, index=True)
     title = db.Column(db.String(500), nullable=False)
     done = db.Column(db.Boolean, default=False, nullable=False)
     position = db.Column(db.Integer, default=0, nullable=False)  # creation order

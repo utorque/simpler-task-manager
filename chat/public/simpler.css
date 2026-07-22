@@ -1,0 +1,37 @@
+/* Visual integration of the embedded Chainlit UI with the Simpler shell.
+   Loaded via UI.custom_css in chat/.chainlit/config.toml. Keep this light:
+   same font stack + background as src/static/css/style.css, hide chrome that
+   duplicates the shell (the shell already has a header and one page). */
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Match the app's page background in light mode. */
+:root {
+    --simpler-bg: #f5f7fa;
+}
+html:not(.dark) body {
+    background: var(--simpler-bg);
+}
+
+/* Dragging a file/folder out of the shell's workspace drawer and over the
+   chat: simpler-bridge.js flags the body while the drag hovers, so the drop
+   target reads as "this will paste the path", not "this will upload". */
+body.simpler-path-dragover {
+    outline: 2px dashed rgba(13, 110, 253, .6);
+    outline-offset: -4px;
+}
+
+/* The shell already brands the page — hide Chainlit's own logo header text
+   watermark ("Built with Chainlit"). */
+a[href*="chainlit.io"] {
+    display: none !important;
+}
+
+/* The owner avatar/menu top right: the shell already owns identity and logout
+   (one login for both, see chat/auth_bridge.py), so the second one is noise. */
+#user-nav-button {
+    display: none !important;
+}

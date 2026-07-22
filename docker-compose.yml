@@ -1,4 +1,8 @@
 services:
+  # web: the whole app — Flask + the embedded Chainlit assistant, one server
+  # (see asgi.py). The Assistant tab (shortcut 6) is always on in this image;
+  # the assistant reuses the AI_* provider config from .env and stores chat
+  # history in ./instance/chainlit.db next to the app DB.
   web:
     build: .
     ports:
@@ -6,21 +10,27 @@ services:
     env_file:
       - .env
     environment:
-      # Same-origin embed of the hermes-webui service below: the app
-      # reverse-proxies it at /hermes-ui/ and the Hermes tab (shortcut 6)
-      # appears — no nginx/DNS changes needed. Comment this out to run
-      # without the Hermes integration (tab disappears).
-      HERMES_WEBUI_INTERNAL_URL: http://hermes-webui:8787
+      # Pre-integrate the simpler-mcp sidecar as the assistant's workspace
+      # tool server (agent mutations audited as actor='agent').
+      SIMPLER_MCP_URL: http://mcp:8765/mcp
+      # Pre-integrate the execution sandbox + share its /workspace so
+      # uploads flow in and produced files flow back to the user.
+      SANDBOX_MCP_URL: http://sandbox:8766/mcp
+      CHAT_FILES_DIR: /workspace
     restart: unless-stopped
     volumes:
       - ./instance:/app/instance
       - ./src:/app/src
+      - assistant-workspace:/workspace
+    networks:
+      - default
+      - sandbox-net
 
-  # simpler-mcp: MCP sidecar exposing the app's domain as agent tools
-  # (PRD 002 pillar A). Wraps the REST API with the API_TOKEN bearer
-  # credential; serves streamable HTTP at /mcp. NOT published on the host —
-  # the hermes-webui service reaches it over the compose network at
-  # http://mcp:8765/mcp. Uncomment `ports` only for a Hermes running
+  # simpler-mcp: MCP sidecar exposing the app's domain as agent tools.
+  # Wraps the REST API with the API_TOKEN bearer credential; serves
+  # streamable HTTP at /mcp. NOT published on the host — the embedded
+  # assistant (and any other compose-network agent) reaches it at
+  # http://mcp:8765/mcp. Uncomment `ports` only for an agent running
   # directly on the host.
   mcp:
     build:
@@ -35,29 +45,31 @@ services:
       - web
     restart: unless-stopped
 
-  # hermes-webui: chat UI + Hermes Agent, fully containerized (PRD 002
-  # pillar B). Built straight from the upstream repo; on first start the
-  # bootstrap auto-installs Hermes Agent into ./hermes-home (persisted, so
-  # later starts are fast and offline-safe). No host port: it is reachable
-  # ONLY through the app's authenticated /hermes-ui/ proxy, so Simpler's
-  # login is the single gate. Configure the agent (model API key, MCP
-  # servers) in ./hermes-home/config.yaml — see doc/setup-hermes-integration.md.
-  hermes-webui:
+  # simpler-sandbox: the assistant's isolated execution environment (MCP,
+  # streamable HTTP at :8766/mcp). It shares ONLY the /workspace volume with
+  # the web service: uploads land there, snippets run on them, produced
+  # files are returned to the user. Contained by construction: no app
+  # secrets, non-root user, capped resources, and it lives on an INTERNAL
+  # network — reachable by `web`, but with no internet egress. Add `default`
+  # to its networks if snippets legitimately need the internet.
+  sandbox:
     build:
-      # Pin to a tag/commit instead of master for reproducible rebuilds,
-      # e.g. ...hermes-webui.git#v1.2.3
-      context: https://github.com/nesquena/hermes-webui.git#master
-    environment:
-      HERMES_WEBUI_HOST: 0.0.0.0
-      HERMES_WEBUI_PORT: 8787
-      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui
-      HERMES_WEBUI_AUTO_INSTALL: "1"
-      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
-      WANTED_UID: ${WANTED_UID:-1000}
-      WANTED_GID: ${WANTED_GID:-1000}
+      context: .
+      dockerfile: sandbox/Dockerfile
     volumes:
-      - ./hermes-home:/home/hermeswebui/.hermes
-      - ./hermes-workspace:/workspace
-    depends_on:
-      - mcp
+      - assistant-workspace:/workspace
+    mem_limit: 1g
+    pids_limit: 256
+    cpus: 1.0
     restart: unless-stopped
+    networks:
+      - sandbox-net
+
+volumes:
+  # Shared assistant file workspace (web <-> sandbox).
+  assistant-workspace:
+
+networks:
+  # web <-> sandbox only; `internal` = no route to the outside world.
+  sandbox-net:
+    internal: true

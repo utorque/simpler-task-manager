@@ -32,9 +32,9 @@
             <button class="nav-tab" data-destination="spaces" title="Spaces — press 5">
                 <i class="fas fa-map-marker-alt"></i> Spaces <kbd>5</kbd>
             </button>
-            {% if hermes_webui_url %}
-            <button class="nav-tab" data-destination="hermes" title="Hermes agent — press 6">
-                <i class="fas fa-robot"></i> Hermes <kbd>6</kbd>
+            {% if assistant_url %}
+            <button class="nav-tab" data-destination="assistant" title="Assistant — press 6">
+                <i class="fas fa-robot"></i> Assistant <kbd>6</kbd>
             </button>
             {% endif %}
         </nav>
@@ -342,13 +342,36 @@
             </div>
         </section>
 
-        {% if hermes_webui_url %}
-        <!-- ===== Hermes destination: embedded hermes-webui chat (PRD 002) =====
-             The iframe src is set lazily on first switch (app.js) so the frame
-             never loads for sessions that don't open it. -->
-        <section id="view-hermes" class="app-view app-view-hermes" style="display: none;">
-            <iframe id="hermesFrame" data-src="{{ hermes_webui_url }}"
-                    title="Hermes agent chat" allow="clipboard-write"></iframe>
+        {% if assistant_url %}
+        <!-- ===== Assistant destination: embedded Chainlit chat (same-origin
+             mount at /assistant by asgi.py). The iframe src is set lazily on
+             first switch (app.js) so the frame never loads for sessions that
+             don't open it. -->
+        <section id="view-assistant" class="app-view app-view-assistant" style="display: none;">
+            <!-- Same subheader pattern as Tasks/Notes: space filter chips.
+                 The selection is written to localStorage and picked up inside
+                 the iframe by chat/public/simpler-bridge.js, which forwards
+                 it to the assistant backend (scopes /tasks, /notes and the
+                 injected space guidance). -->
+            <div class="assistant-toolbar">
+                <div class="space-chips" id="assistantSpaceChips"></div>
+                <button class="btn btn-sm btn-outline-secondary ms-auto" id="workspaceDrawerBtn"
+                        title="Workspace files — press W">
+                    <i class="fas fa-folder-open"></i> Files
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="assistantSettingsBtn"
+                        title="Assistant settings — press ,">
+                    <i class="fas fa-sliders-h"></i> Settings
+                </button>
+            </div>
+            <!-- Chat iframe + the persistent workspace drawer (issue 003.09,
+                 populated by workspace.js on first toggle) side by side. -->
+            <div class="assistant-body">
+                <iframe id="assistantFrame" data-src="{{ assistant_url }}"
+                        title="Simpler assistant chat" allow="clipboard-write"></iframe>
+                <aside id="workspaceDrawer" class="workspace-drawer d-none"
+                       aria-label="Workspace files"></aside>
+            </div>
         </section>
         {% endif %}
     </main>
@@ -589,6 +612,76 @@
         </div>
     </div>
 
+    {% if assistant_url %}
+    <!-- ===== Assistant settings modal (issue 003.07): model list, reasoning
+         levels, skills manager, system-prompt editor, composition viewer.
+         Opens as a transient overlay ABOVE the (persistent) workspace drawer
+         — they live on different layers and never collide. -->
+    <div class="modal fade" id="assistantSettingsModal" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-sliders-h"></i> Assistant settings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <ul class="nav nav-tabs mb-3" id="assistantSettingsTabs" role="tablist">
+                        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#astab-models" type="button">Model</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#astab-modes" type="button">Modes</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#astab-skills" type="button">Skills</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#astab-prompt" type="button">Prompt</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#astab-composition" type="button">Composition</button></li>
+                    </ul>
+                    <div class="tab-content">
+                        <div class="tab-pane fade show active" id="astab-models">
+                            <p class="text-muted small mb-2">Models offered in the chat-bar picker (first = default). Saved to <code>instance/assistant/models.json</code> — new chats pick it up immediately, no restart.</p>
+                            <ul class="list-group mb-2" id="assistantModelList"></ul>
+                            <div class="input-group input-group-sm mb-2">
+                                <input type="text" class="form-control" id="assistantModelInput" placeholder="model id, e.g. claude-sonnet-5">
+                                <button class="btn btn-outline-primary" id="assistantModelAdd">Add</button>
+                            </div>
+                            <button class="btn btn-sm btn-primary" id="assistantModelsSave">Save model list</button>
+                        </div>
+                        <div class="tab-pane fade" id="astab-modes">
+                            <p class="text-muted small mb-2">Reasoning-effort levels offered in the chat bar (<code>medium</code> is the default when present; add <code>none</code> if your provider rejects the parameter). Saved to <code>instance/assistant/reasoning.json</code>.</p>
+                            <ul class="list-group mb-2" id="assistantReasoningList"></ul>
+                            <div class="input-group input-group-sm mb-2">
+                                <input type="text" class="form-control" id="assistantReasoningInput" placeholder="level, e.g. high">
+                                <button class="btn btn-outline-primary" id="assistantReasoningAdd">Add</button>
+                            </div>
+                            <button class="btn btn-sm btn-primary" id="assistantReasoningSave">Save reasoning levels</button>
+                        </div>
+                        <div class="tab-pane fade" id="astab-skills">
+                            <p class="text-muted small mb-2">Reusable instruction packages the model loads on demand. Instance skills are editable; editing a <span class="badge bg-secondary">bundled</span> one forks it to the instance directory.</p>
+                            <div id="assistantSkillsList" class="mb-3"></div>
+                            <div class="border rounded p-2" id="assistantSkillEditor" style="display:none;">
+                                <div class="mb-2"><input type="text" class="form-control form-control-sm" id="assistantSkillName" placeholder="skill-name (letters/digits/._-)"></div>
+                                <div class="mb-2"><input type="text" class="form-control form-control-sm" id="assistantSkillDescription" placeholder="One-line description"></div>
+                                <div class="mb-2"><textarea class="form-control font-monospace" id="assistantSkillBody" rows="10" placeholder="# Instructions for the model…"></textarea></div>
+                                <button class="btn btn-sm btn-primary" id="assistantSkillSave">Save skill</button>
+                                <button class="btn btn-sm btn-outline-secondary" id="assistantSkillCancel">Cancel</button>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary" id="assistantSkillNew">New skill</button>
+                        </div>
+                        <div class="tab-pane fade" id="astab-prompt">
+                            <p class="text-muted small mb-2">The editable base system prompt (identity, vocabulary, style). Per-turn context — date, space guidance, tools, skills — is layered on top automatically (see Composition). Edits are live on the next message.</p>
+                            <p class="text-muted small mb-2">Sections between <code>&lt;!-- simpler:start --&gt;</code> and <code>&lt;!-- simpler:end --&gt;</code> are sent only when the chat-bar <strong>Context</strong> picker is on <em>Simpler</em>; <code>generic:start</code>/<code>generic:end</code> only on <em>Generic</em>. Everything else always goes. HTML comments are stripped before the model sees the prompt.</p>
+                            <div class="mb-2 small" id="assistantPromptSource"></div>
+                            <textarea class="form-control font-monospace mb-2" id="assistantPromptBody" rows="18"></textarea>
+                            <button class="btn btn-sm btn-primary" id="assistantPromptSave">Save</button>
+                            <button class="btn btn-sm btn-outline-danger" id="assistantPromptReset">Reset to shipped</button>
+                        </div>
+                        <div class="tab-pane fade" id="astab-composition">
+                            <p class="text-muted small mb-2">What is pinned into the system prompt right now, layer by layer (read-only). Expand a card for the exact text.</p>
+                            <div id="assistantCompositionLayers"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Keyboard Shortcuts Help Modal -->
     <div class="modal fade" id="helpModal" tabindex="-1">
         <div class="modal-dialog">
@@ -602,8 +695,10 @@
                     <table class="table table-sm shortcuts-table">
                         <tbody>
                             <tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> / <kbd>5</kbd></td><td>Switch to Tasks / Notes / Mail / Calendar / Spaces</td></tr>
-                            {% if hermes_webui_url %}
-                            <tr><td><kbd>6</kbd></td><td>Switch to Hermes (agent chat)</td></tr>
+                            {% if assistant_url %}
+                            <tr><td><kbd>6</kbd></td><td>Switch to Assistant (AI chat)</td></tr>
+                            <tr><td><kbd>,</kbd> (in Assistant)</td><td>Open the Assistant settings (models, reasoning, skills, prompt)</td></tr>
+                            <tr><td><kbd>W</kbd> (in Assistant)</td><td>Toggle the workspace files drawer (browse, upload, edit the assistant's files)</td></tr>
                             {% endif %}
                             <tr><td><kbd>/</kbd></td><td>Focus the quick-capture input</td></tr>
                             <tr><td><kbd>Enter</kbd></td><td>Create task with AI (header or board quick-add input)</td></tr>
@@ -674,6 +769,10 @@
     <script src="/static/js/notes.js"></script>
     <script src="/static/js/mail.js"></script>
     <script src="/static/js/spaces.js"></script>
+    {% if assistant_url %}
+    <script src="/static/js/assistant_settings.js"></script>
+    <script src="/static/js/workspace.js"></script>
+    {% endif %}
     <script src="/static/js/app.js"></script>
 </body>
 </html>

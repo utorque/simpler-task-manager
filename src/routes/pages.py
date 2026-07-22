@@ -9,14 +9,10 @@ pages_bp = Blueprint('pages', __name__)
 def index():
     if not session.get('authenticated'):
         return redirect(url_for('pages.login'))
-    # Hermes iframe src: same-origin proxy (/hermes-ui/, no reverse-proxy
-    # changes needed) when the compose-internal URL is set; else a directly
-    # reachable external webui URL; else no Hermes tab at all.
-    if current_app.config.get('HERMES_WEBUI_INTERNAL_URL'):
-        hermes_src = '/hermes-ui/'
-    else:
-        hermes_src = current_app.config.get('HERMES_WEBUI_URL')
-    return render_template('index.html', hermes_webui_url=hermes_src)
+    # Assistant iframe src: set when the Chainlit app is mounted same-origin
+    # by asgi.py (or ASSISTANT_URL overrides); None hides the Assistant tab.
+    return render_template('index.html',
+                           assistant_url=current_app.config.get('ASSISTANT_URL'))
 
 
 @pages_bp.route('/notes')

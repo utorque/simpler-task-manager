@@ -35,7 +35,7 @@ def login_required(f):
         if session.get('authenticated'):
             return f(*args, **kwargs)
         if _bearer_token_valid():
-            # Machine client (MCP sidecar → Hermes agent). audit.record_change
+            # Machine client (MCP sidecar / embedded assistant). audit.record_change
             # picks this up as the default actor so agent mutations are
             # attributable in the ChangeLog; routes that pass an explicit
             # actor (the AI parse paths' 'ai') keep it.

@@ -26,6 +26,13 @@
 
 `to_dict()` returns a `space` (name) field denormalized from `space_rel` — the UI/API sees a space name but the canonical link is `space_id`. The legacy `space` string is never read.
 
+### `subtasks`
+`id`, `task_id` (FK → tasks.id, NOT NULL, `index=True`, ON DELETE CASCADE), `title` (String(500) NOT NULL), `done` (Boolean NOT NULL default False), `position` (INTEGER NOT NULL default 0 — creation order), `created_at`. Title-only by design: a subtask is a step of one task, so it has no priority, deadline, or scheduling of its own.
+
+Loaded `lazy='selectin'` from `Task.subtasks` (avoids N+1 on the board's load-all query) with `cascade='all, delete-orphan'` — a subtask never outlives its task.
+
+**Two-way done sync**: `Task.apply_status('done')` checks every subtask; `Task.sync_status_from_subtasks()` (call after ANY subtask mutation) promotes the task to `done` when all subtasks are done, and demotes a `done` task to `doing` when one is unchecked. No-op for tasks without subtasks.
+
 ### `spaces`
 `id`, `name` (unique), `description` (Text, helps AI infer context), `context_markdown` (Text — user-editable AI guidance injected into every task-drafting prompt as guide-not-source; see ai-parsing topic), `time_constraints` (Text — JSON string), `created_at`. Helpers `get_time_constraints()` / `set_time_constraints()` round-trip the JSON. Default spaces seeded: `work` (Mon-Fri 09-17), `study` (no constraints), `association` (Wed 18-22).
 
@@ -72,4 +79,8 @@ Notes mutations log to `change_logs` with `entity_type='note'`, `action` in `{cr
 No inbox contents persisted — live IMAP fetch per request (mirrors calendar_sources' live-ICS). `to_dict()` exposes `has_password` only; **passwords never leave the server**. Rotating SECRET_KEY orphans stored passwords (messages endpoints answer 409; user re-enters).
 
 ## Schema management
-There is **no migration framework** (no Alembic / Flask-Migrate). Tables are created via `db.create_all()` at app startup for fresh DBs; existing prod DBs are migrated with **`migrate_db.py`** (repo root): an additive-only diff applier (CREATE missing tables, ADD COLUMN missing columns) followed by **idempotent data fixups** (`DATA_FIXUPS`: backfill `tasks.space_id` from the legacy name string, backfill `tasks.status` from `completed`, backfill `tasks.completed_at` from `updated_at` for already-done rows). When adding a column that needs a data backfill, add a guarded UPDATE to `DATA_FIXUPS` in the same change.
+There is **no migration framework** (no Alembic / Flask-Migrate). Tables are created via `db.create_all()` at app startup for fresh DBs; existing prod DBs are migrated with **`migrate_db.py`** (repo root): an additive-only diff applier (CREATE missing tables, ADD COLUMN missing columns) followed by **idempotent data fixups** (`DATA_FIXUPS`: backfill `tasks.space_id` from the legacy name string, backfill `tasks.status` from `completed`, backfill `tasks.completed_at` from `updated_at` for already-done rows, backfill `change_logs.actor`). When adding a column that needs a data backfill, add a guarded UPDATE to `DATA_FIXUPS` in the same change.
+
+**`db.create_all()` creates missing TABLES only** — it never adds a column to a table that already exists. Any column added to `models.py` reaches an existing DB *only* through `migrate_db.py`, and nothing runs it automatically (not the Dockerfile, not compose). Skipping it surfaces at runtime as a 500 with `sqlite3.OperationalError: no such column: …` — this is exactly how `tasks.status` was lost in 2026-07 when the script was rewritten as a hand-listed step list.
+
+The script is **stdlib-only** (copyable to a server with no venv), so it carries a declarative `SCHEMA` dict hand-mirroring `models.py` rather than importing `db.metadata`. **`tests/test_migrate_db.py` is the drift guard** — it fails when a model table/column has no `SCHEMA` counterpart (or vice versa), and when a table's `create` DDL disagrees with its `columns` map. Two edits per new column: `models.py` and `SCHEMA`.

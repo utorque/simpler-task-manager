@@ -15,7 +15,7 @@ One page, one header, four destinations:
 
 A **global quick-capture input in the header** turns pasted text (emails, thoughts, meeting notes) into structured tasks via an LLM from anywhere in the app.
 
-Optionally (PRD 002), a **Hermes destination** (6th tab, shortcut `6`) embeds a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) chat with a [Hermes Agent](https://github.com/NousResearch/hermes-agent) in an iframe (`HERMES_WEBUI_URL`; tab hidden when unset), and the `mcp_server/` sidecar exposes the whole domain to that agent as MCP tools.
+An **Assistant destination** (6th tab, shortcut `6`) embeds a first-party [Chainlit](https://chainlit.io) chat app (`chat/`, mounted same-origin at `/assistant` by `asgi.py`): persistent chat history, model picker, slash commands that inject tasks/notes into the context, a space-filter subheader, per-space AI guidance injection, file uploads, web search, skills, and an agentic tool loop pre-wired to the `mcp_server/` sidecar (audited workspace tools) and to the `sandbox/` execution sidecar (isolated code execution over a shared file workspace, produced files returned to the user). Setup: `doc/setup-assistant.md`.
 
 **Primary Use**: Self-hosted personal task management
 **Target Users**: Individuals with ADHD who need simple, fast organization with minimal context switching
@@ -61,8 +61,7 @@ simpler-smart-calendar/
 │   │   ├── notes.py           # /api/notes* (CRUD, cleanify, promote-to-task)
 │   │   ├── mailboxes.py       # /api/mailboxes* (CRUD, messages, add-task)
 │   │   ├── calendar_sources.py# /api/calendar-sources*, /api/external-events
-│   │   ├── schedule.py        # /api/schedule, /api/logs
-│   │   └── hermes_proxy.py    # /hermes-ui/* same-origin streaming proxy → hermes-webui container
+│   │   └── schedule.py        # /api/schedule, /api/logs
 │   ├── auth.py                # login_required decorator
 │   ├── audit.py               # record_change() — single-transaction ChangeLog seam
 │   ├── datetime_utils.py      # parse_iso_datetime
@@ -244,7 +243,7 @@ One page, one header:
 | Shortcut | Action |
 |---|---|
 | `1` / `2` / `3` / `4` / `5` | Switch to Tasks / Notes / Mail / Calendar / Spaces |
-| `6` | Switch to Hermes (agent chat; only when `HERMES_WEBUI_URL` is configured) |
+| `6` | Switch to Assistant (AI chat; only when the Chainlit app is mounted, i.e. the `asgi.py` entrypoint) |
 | `/` | Focus the quick-capture input |
 | `Ctrl+Enter` | Save from wherever you're typing (open modal's primary action, notes autosave flush, space editor save; capture inputs create the task) |
 | `S` | Auto-schedule all |
@@ -282,9 +281,11 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 | AI_API_BASE_URL | No | `https://api.openai.com/v1/` | Any OpenAI-compatible endpoint, or `api.anthropic.com` |
 | AI_MODEL | No | `gpt-3.5-turbo` | Model name |
 | APP_PASSWORD | Yes | "admin" | Single shared password |
-| API_TOKEN | No | None | Bearer token for machine clients (MCP sidecar); unset = bearer auth off |
-| HERMES_WEBUI_INTERNAL_URL | No | None | Compose-internal hermes-webui URL; when set the app proxies it same-origin at `/hermes-ui/` (login-gated, X-Frame-Options stripped) and the Hermes tab embeds that. Set by docker-compose |
-| HERMES_WEBUI_URL | No | None | Alternative: directly reachable webui URL to iframe (sibling subdomain + frame-ancestors); ignored when the internal URL is set. Both unset = tab hidden |
+| API_TOKEN | No | None | Bearer token for machine clients (MCP sidecar + embedded assistant); unset = bearer auth off and the assistant loses workspace access |
+| CHAT_MODELS | No | AI_MODEL | Comma-separated model ids offered in the assistant's model picker (first = default) |
+| SIMPLER_MCP_URL | No | None | Simpler's MCP sidecar, pre-integrated as assistant tools (compose sets `http://mcp:8765/mcp`) |
+| SANDBOX_MCP_URL | No | None | Execution-sandbox MCP sidecar (compose sets `http://sandbox:8766/mcp`) |
+| CHAT_FILES_DIR | No | instance/assistant_files | Assistant file workspace (compose points it at the volume shared with the sandbox) |
 | SECRET_KEY | Yes | dev fallback | Flask session secret **and** the key mailbox passwords are encrypted with — rotating it forces re-entering mailbox passwords |
 | FLASK_ENV | No | development | |
 
@@ -293,18 +294,23 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 `migrate_db.py` (repo root) is the supported migration path — no Alembic. Standalone (stdlib-only: `sqlite3` + `shutil`), so it can be copied to the server and run without the app's dependencies. It:
 
 1. **Backs up** the DB first (`tasks.db.bak-<timestamp>` alongside the file).
-2. Applies **additive, idempotent DDL** (currently: the `subtasks` table + index, and the `tasks.note_id` column; safe to re-run).
+2. Applies the **additive schema diff**: CREATE missing tables + indexes, ALTER TABLE ADD COLUMN for columns present in `SCHEMA` but absent from the file. Never drops anything.
+3. Runs **idempotent data fixups** (`DATA_FIXUPS`): guarded UPDATEs backfilling new/canonical columns from legacy ones (`tasks.space_id` from the legacy `space` name, `tasks.status` from `completed`, `tasks.completed_at` from `updated_at`, `change_logs.actor`). Each only touches rows where the target is still unset.
+4. **Verifies** the final schema and fails loudly (backup untouched) if anything is still missing.
 
 ```bash
-python3 migrate_db.py                    # default: ./instance/tasks.db
-python3 migrate_db.py path/to/tasks.db
+python3 migrate_db.py --dry-run             # print the plan, write nothing
+python3 migrate_db.py --yes                 # apply without the confirmation prompt
+python3 migrate_db.py --db path/to/tasks.db # default: ./instance/tasks.db
 ```
 
-Run it after pulling code that changes `models.py`, before `docker compose up`.
+**Run it after pulling code that changes `models.py`, before `docker compose up`** — nothing in the Dockerfile or compose file migrates automatically. `db.create_all()` (called at app startup) creates missing *tables* only; it will **never** add a column to a table that already exists, so a schema change without this script surfaces as a runtime `no such column: …` 500.
+
+The script's `SCHEMA` is a hand-written mirror of `src/models.py` — the price of staying dependency-free. `tests/test_migrate_db.py` is the drift guard: it fails if a model table/column has no counterpart in `SCHEMA` (or vice versa), and end-to-end-migrates a pre-kanban DB shape. When you add a column that needs a backfill, add the `SCHEMA` entry **and** a guarded UPDATE to `DATA_FIXUPS` in the same change.
 
 ## Testing
 
-`pytest` (159 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB. The MCP sidecar's tools are tested in-process (`tests/test_mcp_tools.py`): its httpx client is swapped for an `httpx.WSGITransport` pointed at the Flask test app, so every tool exercises the real routes through the bearer-token path (`tests/test_api_token_auth.py` covers the auth seam itself).
+`pytest` (322 tests): route-layer integration tests through the Flask test client with an in-memory SQLite (`tests/conftest.py`), a `StubAIProvider` patched at the `get_ai_provider` seam, the IMAP seam patched with canned messages, and a pure-data scheduler suite (`tests/test_scheduler.py`) that needs no DB. The MCP sidecar's tools are tested in-process (`tests/test_mcp_tools.py`): its httpx client is swapped for an `httpx.WSGITransport` pointed at the Flask test app, so every tool exercises the real routes through the bearer-token path (`tests/test_api_token_auth.py` covers the auth seam itself).
 
 ```bash
 python -m pytest -q
@@ -318,11 +324,29 @@ docker-compose up -d        # port 53000, ./instance holds tasks.db
 
 Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remember: it also encrypts mailbox passwords), use a WSGI server, HTTPS, and back up `instance/tasks.db`.
 
-**Hermes agent integration (optional, fully containerized)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `hermes-webui` (chat UI + Hermes Agent, auto-installed into `./hermes-home` on first start, no host port). The app reverse-proxies the webui same-origin at `/hermes-ui/` behind the normal login and embeds it as the Hermes tab — no reverse-proxy/DNS changes needed. Set `API_TOKEN` (`openssl rand -hex 32`) and seed `./hermes-home/` — **step-by-step walkthrough: `doc/setup-hermes-integration.md`**. Full architecture, rollout phases, and security analysis (incl. mail prompt-injection guardrails): `.opencode/plans/002_PRD_hermes-agent-integration.md`.
+**Embedded assistant (built in)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `sandbox` (the assistant's isolated execution sidecar, internal network + shared `/workspace` volume). The Chainlit assistant itself runs inside the `web` container (`asgi.py` mounts it same-origin at `/assistant`), gated by the normal login via a session-cookie auth bridge. Set `API_TOKEN` (`openssl rand -hex 32`) to give it workspace access — **walkthrough: `doc/setup-assistant.md`**.
 
 ## Version History
 
-**2026-07 — Hermes agent integration (PRD 002)**:
+**2026-07 — chat history: `steps.modes` write failure**:
+- ✅ Fixed `sqlite3.ProgrammingError: Error binding parameter 4: type 'dict' is not supported` — Chainlit 2.11's mode selector attaches a `modes` dict to every user_message, and upstream json.dumps()es only `metadata` / `generation`, so the raw dict was bound to our TEXT column. The write raised inside the persistence path, so chat kept working while **every user message was silently lost from the history DB**
+- ✅ `chat/data_layer.py`: the `tags` shim generalized to `JSON_TEXT_FIELDS = ('tags', 'modes')` — the list of Postgres-native columns upstream does not serialize itself; empty dicts left alone so upstream's ON CONFLICT column-omission still protects stored values. `modes` added to `STEPS_ADDITIVE_COLUMNS` for DBs created before it joined the schema
+
+**2026-07 — migrate_db.py restored to a schema reconciler**:
+- ✅ Fixed `no such column: tasks.status` on DBs predating the kanban workflow: the earlier rewrite of `migrate_db.py` into a hand-listed two-step script had dropped the `status` / `completed_at` / `actor` migrations and every data fixup, leaving no supported way forward for an existing DB
+- ✅ Back to a full additive reconciler (declarative `SCHEMA` mirroring `models.py` + `DATA_FIXUPS` + post-run verification), still stdlib-only; `--dry-run` / `--yes` / `--db` flags restored to match the documented usage
+- ✅ `tests/test_migrate_db.py` drift guard: fails when `models.py` and `SCHEMA` disagree in either direction, so a migration can no longer be silently lost
+- ✅ `Subtask.task_id` marked `index=True` so fresh DBs get `ix_subtasks_task_id` too (previously only migrated DBs had it)
+
+**2026-07 — Embedded Chainlit assistant (replaces the Hermes integration)**:
+- ✅ First-party Chainlit app (`chat/`) mounted same-origin at `/assistant` by the new `asgi.py` entrypoint (FastAPI umbrella: Chainlit ASGI + Flask via a2wsgi); Hermes webui container + `/hermes-ui/` proxy removed
+- ✅ One login: Chainlit header-auth validates the Flask session cookie by signature (`chat/auth_bridge.py`); chat history persists in `instance/chainlit.db` (SQLAlchemy data layer, SQLite)
+- ✅ Model picker (chat profiles from `CHAT_MODELS`), streaming provider adapter for OpenAI-compatible + Anthropic endpoints incl. tool calls (`chat/providers.py`)
+- ✅ Workspace integration: starters from tasks in Doing, `/task` `/note` `/tasks` `/notes` `/skill` slash commands injecting entities as persisted context (a task always brings its linked note), space-filter subheader synced into the chat session, per-space guidance in the system prompt
+- ✅ Agentic tool loop (`chat/agent.py` + `chat/toolbox.py`): pre-integrated MCP servers (`mcp_server` sidecar + `sandbox` sidecar), user-added MCP servers via Chainlit's UI, native web_search/fetch_url, skills (`chat/skills/`), file uploads in / produced files back out
+- ✅ `sandbox/` sidecar: FastMCP execution sandbox (run_python/run_shell/file tools) in its own container, internal-only network, shared `/workspace` volume; CI publishes `-sandbox` image; local E2E harness in `scripts/e2e/`
+
+**2026-07 — Hermes agent integration (PRD 002, since replaced — see above)**:
 - ✅ `API_TOKEN` bearer auth mode in `auth.py` (constant-time compare; off when unset) + `actor='agent'` ChangeLog attribution via `g.actor` default in `audit.record_change()`
 - ✅ `mcp_server/` FastMCP sidecar (streamable HTTP :8765) — ~26 typed tools wrapping the REST API (tasks/subtasks/spaces/notes/schedule/freeze/changelog/mail-read/email-to-task drafts), compose service `mcp`
 - ✅ Hermes destination: optional 6th tab (shortcut `6`, `#hermes`) embedding hermes-webui via lazy iframe; hidden when unconfigured; help modal updated

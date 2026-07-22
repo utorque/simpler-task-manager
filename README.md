@@ -8,18 +8,25 @@ A self-hosted workspace that unifies **tasks, calendar, notes, and mail** around
 - **Calendar** — AI-parsed tasks auto-scheduled around your external ICS calendars and per-space time windows; drag to reschedule (and freeze)
 - **Spaces** — manage your contexts (work / study / …) with per-weekday scheduling windows and a per-space **AI context markdown** that guides every AI task creation (guide, not source — never copied into tasks)
 - **Quick capture** — paste anything into the header input from any view; the LLM turns it into structured tasks
-- Keyboard-first: `1/2/3/4/5` switch views (Tasks/Notes/Mail/Calendar/Spaces), `/` focuses capture, `?` shows all shortcuts
+- **Assistant** — embedded Chainlit chat (tab 6) with history, model picker, slash commands injecting tasks/notes, space-filter chips, skills, web search, and agentic tools: Simpler's MCP (audited writes) + an isolated execution sandbox with file round-trip — see [doc/setup-assistant.md](doc/setup-assistant.md)
+- Keyboard-first: `1/2/3/4/5/6` switch views (Tasks/Notes/Mail/Calendar/Spaces/Assistant), `/` focuses capture, `?` shows all shortcuts
 
 ## Project Structure
 
 ```
 .
 ├── src/              # Flask app (app factory + routes/ blueprints), templates, static JS/CSS
-├── tests/            # pytest suite (57 tests)
+├── chat/             # Embedded Chainlit assistant (auth bridge, agent loop, tools, skills)
+├── asgi.py           # Canonical entrypoint: FastAPI umbrella (Flask + /assistant)
+├── mcp_server/       # MCP sidecar exposing the workspace as agent tools
+├── sandbox/          # Isolated execution sandbox sidecar (MCP, shared /workspace)
+├── scripts/e2e/      # Local end-to-end harness (mock LLM + socket.io driver)
+├── tests/            # pytest suite
 ├── migrate_db.py     # prod SQLite migration script (additive DDL + data fixups)
 ├── doc/              # Documentation
 │   ├── README.md     # Detailed setup & usage documentation
 │   ├── PROJECT_DESCRIPTION.md  # Authoritative spec (schema, API, architecture)
+│   ├── setup-assistant.md      # Assistant setup & architecture
 │   └── TODO.md       # Roadmap
 ├── Dockerfile
 ├── docker-compose.yml

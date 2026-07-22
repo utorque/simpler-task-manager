@@ -72,26 +72,35 @@ def load_task_selection_prompt():
     except FileNotFoundError:
         return _TASK_SELECTION_PROMPT_DEFAULT
 
+# Repo-root instance/ dir, shared with the assistant's chat history DB and
+# matching migrate_db.py's default. Pinned explicitly because Flask's
+# implicit instance path resolves to src/instance/ (app.root_path-relative),
+# which is NOT the ./instance volume the compose files persist — prod data
+# would silently live inside the container.
+_INSTANCE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance')
+os.makedirs(_INSTANCE_DIR, exist_ok=True)
+
+
 class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///tasks.db'
+    SQLALCHEMY_DATABASE_URI = f"sqlite:///{os.path.join(_INSTANCE_DIR, 'tasks.db')}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     # New generic AI configuration
     AI_API_KEY = os.getenv('AI_API_KEY')
     AI_API_BASE_URL = os.getenv('AI_API_BASE_URL', 'https://api.openai.com/v1/')
     AI_MODEL = os.getenv('AI_MODEL', 'gpt-3.5-turbo')
     APP_PASSWORD = os.getenv('APP_PASSWORD', 'admin')
-    # Machine-client bearer token (MCP sidecar / Hermes agent). Unset = the
-    # bearer auth path is off and only the session cookie authenticates.
+    # Machine-client bearer token (MCP sidecar / embedded assistant). Unset =
+    # the bearer auth path is off and only the session cookie authenticates.
     API_TOKEN = os.getenv('API_TOKEN')
-    # hermes-webui URL for the embedded Hermes destination (6th shell page).
-    # Unset = the Hermes tab is hidden entirely.
-    HERMES_WEBUI_URL = os.getenv('HERMES_WEBUI_URL')
-    # Compose-internal hermes-webui URL. When set, the app reverse-proxies it
-    # same-origin at /hermes-ui/ (routes/hermes_proxy.py) and the Hermes tab
-    # embeds THAT — no sibling DNS name or nginx changes needed. Takes
-    # precedence over HERMES_WEBUI_URL for the iframe src.
-    HERMES_WEBUI_INTERNAL_URL = os.getenv('HERMES_WEBUI_INTERNAL_URL')
+    # Embedded assistant (Chainlit app mounted same-origin at /assistant by
+    # asgi.py, which sets SIMPLER_ASSISTANT_MOUNTED). When unset — e.g. the
+    # Flask-only dev run `python src/app.py` — the Assistant tab is hidden
+    # and the app is byte-identical to before. ASSISTANT_URL overrides the
+    # iframe src for exotic setups (assistant served elsewhere).
+    ASSISTANT_URL = os.getenv('ASSISTANT_URL') or (
+        '/assistant/' if os.getenv('SIMPLER_ASSISTANT_MOUNTED') else None)
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
     SYSTEM_PROMPT = load_system_prompt()
     NOTES_CLEANIFY_PROMPT = load_notes_cleanify_prompt()

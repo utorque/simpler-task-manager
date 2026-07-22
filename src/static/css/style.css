@@ -775,18 +775,151 @@ body {
     padding: 16px 20px;
 }
 
-/* Hermes destination: the embedded chat iframe owns the whole area under
-   the header (no shell padding/scrollbar — the webui scrolls itself). */
-.app-view-hermes {
+/* Assistant destination: space-chips subheader (same look as the Tasks
+   toolbar) above the embedded chat iframe, which owns the remaining area
+   (no shell padding/scrollbar — the chat UI scrolls itself). */
+.app-view-assistant {
     padding: 0;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
-.app-view-hermes iframe {
+.assistant-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px;
+    background: white;
+    border-bottom: 1px solid #e0e6ed;
+    flex: 0 0 auto;
+}
+
+.app-view-assistant iframe {
     display: block;
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     border: 0;
+}
+
+/* Chat iframe + workspace drawer side by side (issue 003.09). */
+.assistant-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+.workspace-drawer {
+    flex: 0 0 min(380px, 20vw);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: white;
+    border-left: 1px solid #e0e6ed;
+    font-size: 0.875rem;
+}
+
+.workspace-drawer.workspace-dragover {
+    outline: 2px dashed #0d6efd;
+    outline-offset: -4px;
+}
+
+.workspace-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e0e6ed;
+    flex: 0 0 auto;
+}
+
+.workspace-breadcrumb {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workspace-breadcrumb a {
+    text-decoration: none;
+}
+
+.workspace-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 6px;
+}
+
+.workspace-row {
+    padding: 3px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    gap: 6px;
+}
+
+.workspace-row:hover {
+    background: #f2f5f9;
+}
+
+.workspace-row.workspace-droptarget {
+    background: #e7f1ff;
+}
+
+.workspace-row-actions {
+    visibility: hidden;
+    flex: 0 0 auto;
+}
+
+.workspace-row:hover .workspace-row-actions {
+    visibility: visible;
+}
+
+.workspace-row-actions a {
+    color: #6c757d;
+    margin-left: 8px;
+    text-decoration: none;
+}
+
+.workspace-children {
+    margin-left: 14px;
+    border-left: 1px solid #eef1f5;
+    padding-left: 4px;
+}
+
+.workspace-editor {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.workspace-editor.d-none {
+    display: none;
+}
+
+.workspace-editor-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e0e6ed;
+    flex: 0 0 auto;
+}
+
+.workspace-drophint {
+    padding: 6px 10px;
+    border-top: 1px solid #e0e6ed;
+    flex: 0 0 auto;
+    text-align: center;
+}
+
+/* On narrow screens the drawer collapses to a bottom-heavy overlay-free
+   min width instead of squeezing the chat away (desktop-first, per PRD). */
+@media (max-width: 900px) {
+    .workspace-drawer {
+        flex-basis: 260px;
+    }
 }
 
 /* ===== Tasks destination: toolbar (chips + board/overview toggle) =====
@@ -1065,6 +1198,39 @@ body {
 
 .board-card-notelink:hover {
     color: #2d3748;
+}
+
+/* Left of the priority badge: hand this task to the assistant (app.js
+   pinTaskToAssistant). Dim until the card is hovered — it is a shortcut, not
+   part of the card's information. */
+.board-card-assist {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: #cbd5e0;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    /* Third child of a space-between row: the auto margin eats the free space
+       so the button sits against the priority badge, not mid-card. */
+    margin-left: auto;
+    transition: color .15s, background .15s;
+}
+
+.board-card:hover .board-card-assist {
+    color: #718096;
+}
+
+.board-card-assist:hover {
+    color: #667eea;
+    background: #edf2f7;
 }
 
 /* Right column of a board card: priority badge with the add-subtask + below */

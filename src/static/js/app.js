@@ -97,12 +97,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Load initial data
     await Promise.all([loadTasks(), loadSpaces()]);
 
-    // Destination: deep link (#tasks/#notes/#mail/#calendar/#spaces/#hermes) > last used > Tasks.
-    // Hermes only exists when HERMES_WEBUI_URL is configured (tab + view are
+    // Destination: deep link (#tasks/#notes/#mail/#calendar/#spaces/#assistant) > last used > Tasks.
+    // Assistant only exists when the Chainlit app is mounted (tab + view are
     // server-side conditional) — an unavailable remembered/hashed destination
     // falls back to Tasks.
     const destinations = ['tasks', 'notes', 'mail', 'calendar', 'spaces'];
-    if (document.getElementById('view-hermes')) destinations.push('hermes');
+    if (document.getElementById('view-assistant')) destinations.push('assistant');
     const fromHash = window.location.hash.replace('#', '');
     let initial = destinations.includes(fromHash)
         ? fromHash
@@ -198,7 +198,8 @@ function switchDestination(destination) {
 
     document.querySelectorAll('.app-view').forEach(v => v.style.display = 'none');
     const view = document.getElementById(`view-${destination}`);
-    if (view) view.style.display = 'block';
+    // The assistant view is a column flexbox (toolbar above the iframe).
+    if (view) view.style.display = destination === 'assistant' ? 'flex' : 'block';
 
     document.querySelectorAll('#appNav .nav-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.destination === destination);
@@ -223,10 +224,11 @@ function switchDestination(destination) {
     if (destination === 'spaces' && window.SpacesView) {
         window.SpacesView.enter();
     }
-    if (destination === 'hermes') {
-        // Lazy-load the embedded hermes-webui on first visit only.
-        const frame = document.getElementById('hermesFrame');
+    if (destination === 'assistant') {
+        // Lazy-load the embedded assistant on first visit only.
+        const frame = document.getElementById('assistantFrame');
         if (frame && !frame.src) frame.src = frame.dataset.src;
+        renderAssistantSpaceChips();
     }
 }
 
@@ -300,7 +302,7 @@ function initKeyboardShortcuts() {
             case '4': switchDestination('calendar'); break;
             case '5': switchDestination('spaces'); break;
             case '6':
-                if (document.getElementById('view-hermes')) switchDestination('hermes');
+                if (document.getElementById('view-assistant')) switchDestination('assistant');
                 break;
             case '/':
                 e.preventDefault();
@@ -396,6 +398,13 @@ function wireTaskClickDelegation(containerId, selector) {
             // Clicks inside the inline add-subtask input must not open the modal.
             if (e.target.closest('.board-subtask-input')) {
                 e.stopPropagation();
+                return;
+            }
+            // Robot button: hand the task to the assistant and go there.
+            if (e.target.closest('.board-card-assist')) {
+                e.preventDefault();
+                e.stopPropagation();
+                pinTaskToAssistant(taskId);
                 return;
             }
             // Note badge: jump to the source note in the Notes destination.
@@ -800,6 +809,99 @@ async function autoSelectDoing() {
     }
 }
 
+// ===== Assistant space filter (subheader chips above the chat iframe) =====
+// Independent from the board filter. The selection lives in localStorage
+// ('assistantSpaceFilter': JSON array of space ids, or null = all); the
+// assistant iframe is same-origin and reads it via chat/public/simpler-bridge.js.
+
+// The Assistant destination only exists when the chat is mounted
+// (ASSISTANT_URL, see src/config.py) — board cards hide their robot button
+// when it is not.
+function assistantEnabled() {
+    return !!document.getElementById('view-assistant');
+}
+
+// Board card robot button: hand this task over to the assistant.
+// The pin waits in localStorage rather than being posted to the iframe: on the
+// first visit the iframe does not exist yet (lazy-loaded by switchDestination).
+// chat/public/simpler-bridge.js picks it up, the chat backend injects the task
+// (+ its linked note) into the thread and seeds the composer with "#id — ".
+function pinTaskToAssistant(taskId) {
+    if (!assistantEnabled()) return;
+    localStorage.setItem('assistantPinnedTask',
+        JSON.stringify({ task_id: taskId, ts: Date.now() }));
+    switchDestination('assistant');
+}
+
+// The assistant's starters are the tasks in Doing, and the embedded Chainlit
+// only ships them in the config it fetches once per page load. Publishing a
+// revision of that set lets the bridge notice a board change and refresh the
+// iframe by itself — no F5 — while the welcome screen is up.
+function publishAssistantStartersRev() {
+    if (!assistantEnabled()) return;
+    const rev = tasks.filter(t => t.status === 'doing')
+        .map(t => `${t.id}:${t.title || ''}`)
+        .sort()
+        .join('|');
+    if (localStorage.getItem('assistantStartersRev') !== rev) {
+        localStorage.setItem('assistantStartersRev', rev);
+    }
+}
+
+function getAssistantSpaceFilter() {
+    try {
+        const raw = localStorage.getItem('assistantSpaceFilter');
+        const parsed = raw ? JSON.parse(raw) : null;
+        return Array.isArray(parsed) && parsed.length ? parsed : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function setAssistantSpaceFilter(filter) {
+    localStorage.setItem('assistantSpaceFilter', JSON.stringify(filter));
+}
+
+function renderAssistantSpaceChips() {
+    const container = document.getElementById('assistantSpaceChips');
+    if (!container) return;
+
+    const filter = getAssistantSpaceFilter();
+    const chip = (label, value, active) => `
+        <button class="space-chip ${active ? 'active' : ''}"
+                data-space-id="${value === null ? 'all' : value}">
+            ${label}
+        </button>`;
+
+    container.innerHTML =
+        chip('All spaces', null, filter === null) +
+        spaces.map(s => chip(escapeHtml(s.name), s.id,
+            filter !== null && filter.includes(s.id))).join('');
+
+    // Plain click = only that space; Ctrl+click = toggle it in/out of the
+    // selection (empty set falls back to all); "All spaces" resets.
+    container.querySelectorAll('.space-chip').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const v = btn.dataset.spaceId;
+            let filter = getAssistantSpaceFilter();
+            if (v === 'all') {
+                filter = null;
+            } else {
+                const id = parseInt(v);
+                if (e.ctrlKey || e.metaKey) {
+                    const set = new Set(filter || []);
+                    set.has(id) ? set.delete(id) : set.add(id);
+                    filter = set.size ? Array.from(set) : null;
+                } else {
+                    filter = [id];
+                }
+            }
+            setAssistantSpaceFilter(filter);
+            renderAssistantSpaceChips();
+        });
+    });
+}
+
 function renderSpaceChips() {
     const container = document.getElementById('spaceChips');
     if (!container) return;
@@ -925,6 +1027,8 @@ function renderBoardCard(task) {
              data-task-id="${task.id}">
             <div class="board-card-top">
                 <div class="board-card-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title || '(untitled)')}</div>
+                ${assistantEnabled() ? `<button type="button" class="board-card-assist"
+                        title="Work on this with the assistant"><i class="fas fa-robot"></i></button>` : ''}
                 <div class="board-card-side">
                     <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
                     <button type="button" class="board-card-addsub" title="Add subtask">+</button>
@@ -1184,6 +1288,7 @@ function initSortable() {
 async function loadTasks() {
     const response = await fetch('/api/tasks?include_completed=true');
     tasks = await response.json();
+    publishAssistantStartersRev();
     renderAll();
 }
 
