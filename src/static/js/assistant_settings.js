@@ -11,6 +11,7 @@
 
     let state = null;          // last GET /api/assistant/settings payload
     let editingSkill = null;   // name of the skill open in the editor, or null
+    let promptMDE = null;      // EasyMDE over the system-prompt textarea
 
     function el(id) { return document.getElementById(id); }
 
@@ -167,19 +168,81 @@
     }
 
     // ===== Prompt editor =====================================================
+    // Same convention as the notes editor: the prompt opens rendered (EasyMDE
+    // preview mode) and a double-click on the preview drops into edit mode.
+
+    function setPromptPreview(on) {
+        if (!promptMDE) return;
+        if (promptMDE.isPreviewActive() !== on) promptMDE.togglePreview();
+    }
+
+    function initPromptEditor() {
+        if (promptMDE || typeof EasyMDE === 'undefined') return;
+        promptMDE = new EasyMDE({
+            element: el('assistantPromptBody'),
+            autosave: { enabled: false },
+            autoDownloadFontAwesome: false,
+            status: false,
+            spellChecker: false,
+            // Side-by-side must stay inside the modal, not take over the whole
+            // screen (EasyMDE defaults to fullscreen side-by-side).
+            sideBySideFullscreen: false,
+            minHeight: '360px',
+            // simpler:/generic: section markers are HTML comments — invisible
+            // once rendered. Show them as inline code so preview mode still
+            // exposes where the context-conditional blocks start and end.
+            previewRender: function (plainText) {
+                return this.parent.markdown(plainText.replace(
+                    /<!--\s*(?:simpler|generic):(?:start|end)\s*-->/g,
+                    (marker) => '`' + marker + '`'));
+            },
+            toolbar: [
+                'bold', 'italic', '|',
+                'heading-1', 'heading-2', 'heading-3', '|',
+                'quote', 'unordered-list', 'ordered-list', '|',
+                'code', 'horizontal-rule', '|',
+                'link', '|',
+                'preview', 'side-by-side', '|', 'guide',
+            ],
+        });
+        // Preview → edit on double-click; links keep their normal behavior and
+        // the side-by-side live preview (.editor-preview-side) is untouched.
+        el('astab-prompt').addEventListener('dblclick', (event) => {
+            if (!promptMDE.isPreviewActive()) return;
+            if (event.target.closest('a')) return;
+            if (!event.target.closest('.editor-preview-full')) return;
+            setPromptPreview(false);
+            promptMDE.codemirror.refresh();
+            promptMDE.codemirror.focus();
+        });
+        // The editor is built while its tab-pane is hidden, so CodeMirror
+        // measures a zero height — remeasure when the Prompt tab is shown.
+        const tab = document.querySelector('[data-bs-target="#astab-prompt"]');
+        if (tab) tab.addEventListener('shown.bs.tab', () => promptMDE.codemirror.refresh());
+    }
 
     function renderPrompt() {
         const prompt = state.system_prompt || {};
         el('assistantPromptSource').innerHTML = prompt.source === 'instance'
             ? `Editing the <strong>instance override</strong> (last saved ${escapeHtml(prompt.last_modified || '?')})`
             : 'Showing the <strong>shipped default</strong> — saving creates an instance override that survives upgrades.';
-        el('assistantPromptBody').value = prompt.body || '';
+        const body = prompt.body || '';
+        initPromptEditor();
+        if (!promptMDE) { el('assistantPromptBody').value = body; return; }
+        // The preview pane only re-renders on toggle: write the buffer with
+        // preview off, then flip it back on for a non-empty prompt.
+        setPromptPreview(false);
+        promptMDE.value(body);
+        setPromptPreview(!!body.trim());
+    }
+
+    function promptBody() {
+        return promptMDE ? promptMDE.value() : el('assistantPromptBody').value;
     }
 
     async function savePrompt() {
         try {
-            await api('PUT', '/api/assistant/system-prompt',
-                      { body: el('assistantPromptBody').value });
+            await api('PUT', '/api/assistant/system-prompt', { body: promptBody() });
             await refresh();
         } catch (error) { report(error); }
     }

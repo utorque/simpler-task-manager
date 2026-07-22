@@ -282,8 +282,8 @@ window.NotesView = (function () {
     }
 
     // --- Editor ---
-    // Notes open rendered (EasyMDE preview mode) by default; clicking the
-    // preview switches to edit mode. Empty notes go straight to edit — an
+    // Notes open rendered (EasyMDE preview mode) by default; double-clicking
+    // the preview switches to edit mode. Empty notes go straight to edit — an
     // empty preview pane is a dead end.
     function setPreviewMode(on) {
         if (!easyMDE) return;
@@ -525,10 +525,11 @@ window.NotesView = (function () {
             const btn = document.getElementById('notePromoteBtn');
             btn.disabled = !(state.currentNote && easyMDE.codemirror.somethingSelected());
         });
-        // Preview → edit: clicking anywhere on the rendered note switches
-        // back to the editor. Links keep their normal behavior, and the
+        // Preview → edit: double-clicking anywhere on the rendered note
+        // switches back to the editor (single click stays inert so the preview
+        // text can be selected). Links keep their normal behavior, and the
         // side-by-side live preview (.editor-preview-side) is not affected.
-        document.getElementById('view-notes').addEventListener('click', (e) => {
+        document.getElementById('view-notes').addEventListener('dblclick', (e) => {
             if (!easyMDE.isPreviewActive()) return;
             if (e.target.closest('a')) return;
             if (!e.target.closest('.editor-preview-full')) return;

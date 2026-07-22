@@ -45,7 +45,7 @@
 ## Assistant settings panel (Bundle B, PRD 003)
 
 - **`/api/assistant/*` blueprint** (`src/routes/assistant_settings.py`): GET aggregate settings; PUT models / reasoning-levels (validated non-empty string lists → `instance/assistant/*.json`); GET/PUT/DELETE system-prompt (override write / reset-to-shipped); skills CRUD wrapping `chat.skills`. The composition viewer returns `build_system_prompt_layers()` output (spaces pre-fetched from the DB — no HTTP loop-back into our own server; `build_toolbox`/`selected_space_ids` tolerate the missing Chainlit session context).
-- **UI** (`src/static/js/assistant_settings.js` + modal in `index.html`): Settings button right of the space chips, shortcut `,` (Assistant tab only). Tabs: Model · Modes · Skills · Prompt · Composition. All changes are live (per-message reads) — no restart.
+- **UI** (`src/static/js/assistant_settings.js` + modal in `index.html`): Settings button right of the space chips, shortcut `,` (Assistant tab only). Tabs: Model · Modes · Skills · Prompt · Composition. All changes are live (per-message reads) — no restart. The Prompt tab runs an EasyMDE editor over `#assistantPromptBody` with the same preview-by-default convention as the notes editor (double-click the rendered preview to edit); its `previewRender` wraps the `simpler:`/`generic:` HTML-comment markers in inline code so they stay visible when rendered, and CodeMirror is refreshed on `shown.bs.tab` because it is built inside a hidden pane.
 - **`instance/assistant/`** (via `chat/assistant_settings.py`, pure stdlib): the gitignored per-instance home — `system.md` (prompt override), `models.json`, `reasoning.json`, `skills/`. Created on access; the `instance/` gitignore rule covers it.
 
 ## Chat history (`chat/data_layer.py`)
