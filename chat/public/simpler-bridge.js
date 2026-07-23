@@ -126,55 +126,91 @@
         window.addEventListener('load', function () { setTimeout(tick, 500); });
     }
 
-    /* "Work on this with the assistant": the board card's robot button
-     * (src/static/js/app.js) hands a task over through localStorage, then
-     * switches to the Assistant tab.
+    /* "Work on this with the assistant": the shell's robot buttons (board
+     * cards and note rows, src/static/js/app.js) hand tasks/notes over through
+     * a localStorage queue (`assistantPinQueue`, a JSON array of
+     * {kind:'task'|'note', id}). A plain click also switches to the Assistant
+     * tab; Ctrl+click stages an item and stays put, so several can pile up
+     * before the user comes over.
      *
      * localStorage rather than postMessage because the shell lazy-loads this
      * iframe — the very first pin happens BEFORE this script exists, so the
-     * handoff has to be a value that waits for us, not an event. The key is
-     * read once and removed; the pin is then re-posted every tick until the
-     * backend answers with its prefill (the socket may not be up yet on a
-     * cold iframe), then dropped.
+     * handoff has to be a value that waits for us, not an event. The queue is
+     * drained (read once and removed) only while this iframe is actually on
+     * screen, so background staging never delivers early; everything staged is
+     * then handed over together the moment the Assistant tab opens. The batch
+     * is re-posted every tick until the backend answers with its prefill (the
+     * socket may not be up yet on a cold iframe), then dropped.
      *
-     * Backend side: @cl.on_window_message → on_pin_task, same injection the
+     * Backend side: @cl.on_window_message → on_pin_refs, same injection the
      * task starters run. */
-    var pendingPin = null;
+    var PIN_QUEUE_KEY = 'assistantPinQueue';
+    var pendingPins = null;
 
-    function readPinnedTask() {
+    // Only deliver while the Assistant view is visible: the parent hides this
+    // iframe (display:none) on other tabs, so a hidden frame has no offsetParent.
+    function assistantVisible() {
+        try {
+            var fe = window.frameElement;
+            if (!fe) return true;            // not framed (tests) → assume visible
+            return fe.offsetParent !== null;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    function readPinnedRefs() {
         var raw;
         try {
-            raw = window.localStorage.getItem('assistantPinnedTask');
+            raw = window.localStorage.getItem(PIN_QUEUE_KEY);
             if (!raw) return;
-            window.localStorage.removeItem('assistantPinnedTask');
+            window.localStorage.removeItem(PIN_QUEUE_KEY);
         } catch (e) {
             return;
         }
-        var pin;
-        try { pin = JSON.parse(raw); } catch (e) { return; }
-        if (pin && pin.task_id) pendingPin = { task_id: pin.task_id, tries: 0 };
+        var queue;
+        try { queue = JSON.parse(raw); } catch (e) { return; }
+        if (!Array.isArray(queue)) return;
+        var refs = [];
+        for (var i = 0; i < queue.length; i++) {
+            var p = queue[i];
+            if (p && p.id != null && (p.kind === 'task' || p.kind === 'note')) {
+                refs.push({ kind: p.kind, id: p.id });
+            }
+        }
+        if (!refs.length) return;
+        // A batch that arrives mid-flight (rapid staging) joins the pending one.
+        if (pendingPins) {
+            pendingPins.refs = pendingPins.refs.concat(refs);
+            pendingPins.tries = 0;
+        } else {
+            pendingPins = { refs: refs, tries: 0 };
+        }
     }
 
     function pumpPinnedTask() {
-        readPinnedTask();
-        if (!pendingPin) return;
+        // Draining a hidden iframe would deliver staged pins into a conversation
+        // the user hasn't opened yet — wait until the Assistant view is on screen.
+        if (!assistantVisible()) return;
+        readPinnedRefs();
+        if (!pendingPins) return;
         // The composer only exists once the chat session is mounted; posting
         // before that goes nowhere (nothing relays it to the backend yet).
         if (!document.getElementById('chat-input')) return;
-        if (pendingPin.tries++ > 5) {
-            pendingPin = null;
+        if (pendingPins.tries++ > 5) {
+            pendingPins = null;
             return;
         }
         window.postMessage(JSON.stringify({
-            type: 'simpler-pin-task',
-            task_id: pendingPin.task_id
+            type: 'simpler-pin',
+            refs: pendingPins.refs
         }), window.location.origin);
     }
 
     // Same-origin parent writes fire `storage` here: pin without waiting for
-    // the next poll when the iframe is already loaded.
+    // the next poll when the iframe is already loaded and visible.
     window.addEventListener('storage', function (event) {
-        if (event.key === 'assistantPinnedTask') pumpPinnedTask();
+        if (event.key === PIN_QUEUE_KEY) pumpPinnedTask();
     });
 
     /* Starters are the tasks in Doing, and Chainlit ships them inside the
@@ -195,7 +231,7 @@
         var rev = readStartersRev();
         if (rev === startersRev) return;
         startersRev = rev;
-        if (pendingPin) return;                       // a pin is mid-flight
+        if (pendingPins) return;                      // a pin is mid-flight
         if (!document.getElementById('starters')) return;
         var input = document.getElementById('chat-input');
         if (input && input.value.trim()) return;      // don't eat a draft
@@ -263,7 +299,7 @@
             try { data = JSON.parse(data); } catch (e) { return; }
         }
         if (!data || data.type !== 'simpler-starter-prefill') return;
-        pendingPin = null;   // the backend answered: stop re-posting the pin
+        pendingPins = null;  // the backend answered: stop re-posting the pins
         setComposerText(data.prefill || '');
     }
 

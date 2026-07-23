@@ -727,6 +727,25 @@ body {
     padding: 1px 4px;
 }
 
+/* Count of tasks/notes staged for the assistant (app.js updateAssistantPinBadge).
+   Sits on the Assistant tab; a coral pill so it reads as "waiting for you". */
+.nav-pin-badge {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: #f6ad55;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+}
+.nav-tab.active .nav-pin-badge {
+    background: #fff;
+    color: #764ba2;
+}
+
 .quick-capture {
     display: flex;
     gap: 6px;
@@ -1201,8 +1220,8 @@ body {
 }
 
 /* Left of the priority badge: hand this task to the assistant (app.js
-   pinTaskToAssistant). Dim until the card is hovered — it is a shortcut, not
-   part of the card's information. */
+   pinToAssistant; Ctrl+click stages without opening). Dim until the card is
+   hovered — it is a shortcut, not part of the card's information. */
 .board-card-assist {
     width: 22px;
     height: 22px;
@@ -1627,8 +1646,38 @@ body {
     padding: 0.6rem 0.4rem;
     border-bottom: 1px solid #f1f3f5;
     cursor: pointer;
+    /* Anchor for the absolutely-positioned assistant button (top-right). */
+    position: relative;
 }
 .note-row:hover { background: #f8f9fa; }
+
+/* Robot button on a note row: hand this note to the assistant (notes.js
+   pinToAssistant). Mirrors .board-card-assist — dim until the row is hovered,
+   since it is a shortcut, not part of the note's information. */
+.note-row-assist {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.4rem;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: transparent;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .15s, background .15s;
+}
+.note-row:hover .note-row-assist { color: #718096; }
+.note-row-assist:hover {
+    color: #667eea;
+    background: #edf2f7;
+}
 .note-row.active { background: #e7f1ff; }
 /* Ctrl+click download selection */
 .note-row.selected {

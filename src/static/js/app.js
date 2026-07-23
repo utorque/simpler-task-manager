@@ -187,6 +187,13 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     initKeyboardShortcuts();
     initGlobalCtrlEnterSave();
+
+    // Staged-pin count on the Assistant tab (survives reloads; the bridge
+    // clears the queue key when it delivers, which fires a storage event here).
+    updateAssistantPinBadge();
+    window.addEventListener('storage', (e) => {
+        if (e.key === ASSISTANT_PIN_QUEUE_KEY) updateAssistantPinBadge();
+    });
 });
 
 // ===== Destination switching (one header, N views) =====
@@ -401,10 +408,12 @@ function wireTaskClickDelegation(containerId, selector) {
                 return;
             }
             // Robot button: hand the task to the assistant and go there.
+            // Ctrl/Cmd+click stages it instead — pin without leaving the board,
+            // so several tasks/notes can be gathered before opening the assistant.
             if (e.target.closest('.board-card-assist')) {
                 e.preventDefault();
                 e.stopPropagation();
-                pinTaskToAssistant(taskId);
+                pinToAssistant('task', taskId, e.ctrlKey || e.metaKey);
                 return;
             }
             // Note badge: jump to the source note in the Notes destination.
@@ -821,16 +830,67 @@ function assistantEnabled() {
     return !!document.getElementById('view-assistant');
 }
 
-// Board card robot button: hand this task over to the assistant.
-// The pin waits in localStorage rather than being posted to the iframe: on the
-// first visit the iframe does not exist yet (lazy-loaded by switchDestination).
-// chat/public/simpler-bridge.js picks it up, the chat backend injects the task
-// (+ its linked note) into the thread and seeds the composer with "#id — ".
-function pinTaskToAssistant(taskId) {
+// Hand a task or note over to the assistant. The pins wait in localStorage as
+// a queue rather than being posted to the iframe directly: on the first visit
+// the iframe does not exist yet (lazy-loaded by switchDestination).
+// chat/public/simpler-bridge.js drains the queue once the assistant is visible;
+// the chat backend injects each task (+ its linked note) / note into the thread
+// and seeds the composer with their refs.
+//
+// `stay` (Ctrl/Cmd+click on the robot button) pins without opening the
+// assistant, so several tasks and/or notes can be gathered first; a plain click
+// pins and switches over. The queue is only delivered when the assistant is on
+// screen, so staging in the background never drains it early.
+const ASSISTANT_PIN_QUEUE_KEY = 'assistantPinQueue';
+
+function readAssistantPinQueue() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(ASSISTANT_PIN_QUEUE_KEY));
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function pinToAssistant(kind, id, stay) {
     if (!assistantEnabled()) return;
-    localStorage.setItem('assistantPinnedTask',
-        JSON.stringify({ task_id: taskId, ts: Date.now() }));
+    const queue = readAssistantPinQueue();
+    if (!queue.some(p => p.kind === kind && p.id === id)) {
+        queue.push({ kind, id, ts: Date.now() });
+    }
+    if (stay) {
+        // Stage only: write the queue and flag the assistant tab with the count.
+        localStorage.setItem(ASSISTANT_PIN_QUEUE_KEY, JSON.stringify(queue));
+        updateAssistantPinBadge();
+        return;
+    }
+    // Reveal the iframe first, THEN write — the storage event the write fires
+    // reaches an already-visible bridge, which drains the queue immediately.
     switchDestination('assistant');
+    localStorage.setItem(ASSISTANT_PIN_QUEUE_KEY, JSON.stringify(queue));
+    updateAssistantPinBadge();
+}
+
+// Small count on the Assistant nav tab: how many tasks/notes are staged and
+// waiting. The bridge removes the queue key once it delivers them; that removal
+// fires a storage event here (the iframe is a separate browsing context), so
+// the badge clears itself when the pins actually land.
+function updateAssistantPinBadge() {
+    const tab = document.querySelector(
+        '#appNav .nav-tab[data-destination="assistant"]');
+    if (!tab) return;
+    const n = readAssistantPinQueue().length;
+    let badge = tab.querySelector('.nav-pin-badge');
+    if (n > 0) {
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'nav-pin-badge';
+            tab.appendChild(badge);
+        }
+        badge.textContent = String(n);
+    } else if (badge) {
+        badge.remove();
+    }
 }
 
 // The assistant's starters are the tasks in Doing, and the embedded Chainlit
@@ -1028,7 +1088,7 @@ function renderBoardCard(task) {
             <div class="board-card-top">
                 <div class="board-card-title">${task.frozen ? '❄️ ' : ''}${escapeHtml(task.title || '(untitled)')}</div>
                 ${assistantEnabled() ? `<button type="button" class="board-card-assist"
-                        title="Work on this with the assistant"><i class="fas fa-robot"></i></button>` : ''}
+                        title="Work on this with the assistant (Ctrl+click to stage without opening)"><i class="fas fa-robot"></i></button>` : ''}
                 <div class="board-card-side">
                     <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
                     <button type="button" class="board-card-addsub" title="Add subtask">+</button>

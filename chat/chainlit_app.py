@@ -195,7 +195,10 @@ async def on_window_message(message):
             cl.user_session.set('space_filter', None)
     elif data.get('type') == 'simpler-starter-click':
         await on_starter_click(data.get('label') or '')
+    elif data.get('type') == 'simpler-pin':
+        await on_pin_refs(data.get('refs'))
     elif data.get('type') == 'simpler-pin-task':
+        # Legacy single-task pin (kept for older bridge builds).
         await on_pin_task(data.get('task_id'))
 
 
@@ -266,6 +269,50 @@ async def on_pin_task(task_id):
     except (TypeError, ValueError):
         return
     await inject_and_prefill('task', f"#{task_id} — ")
+
+
+# Composer seed per kind: tasks keep the bare "#id" ref (matches the starters);
+# notes get a "note #id" ref so a mixed batch reads unambiguously.
+_PIN_SEED = {'task': lambda i: f"#{i}", 'note': lambda i: f"note #{i}"}
+
+
+async def on_pin_refs(refs):
+    """The shell's robot buttons (board cards and note rows) hand one or more
+    tasks/notes over at once (src/static/js/app.js → localStorage queue →
+    chat/public/simpler-bridge.js). Inject each item's context block — a task
+    brings its linked note along, a note its full content — then seed the
+    composer with references to everything staged. Works on a running
+    conversation too, exactly like clicking each item's starter."""
+    if not isinstance(refs, list):
+        return
+    seeds = []
+    injected = False
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        command = ref.get('kind')
+        if command not in _PIN_SEED:
+            continue
+        try:
+            item_id = int(ref.get('id'))
+        except (TypeError, ValueError):
+            continue
+        block, error = await commands.handle_command(
+            command, f"#{item_id}", selected_space_ids())
+        if error:
+            await cl.Message(content=error).send()
+        elif block:
+            await cl.Message(content=block, type='system_message',
+                             author='Workspace context').send()
+            injected = True
+        seeds.append(_PIN_SEED[command](item_id))
+    if not seeds:
+        return
+    # Even if every lookup errored (nothing injected), still answer with a
+    # prefill so the bridge stops re-posting the batch.
+    prefill = ' '.join(seeds) + ' — '
+    await cl.send_window_message(
+        {'type': 'simpler-starter-prefill', 'prefill': prefill})
 
 
 async def register_commands(simpler: bool = True):
