@@ -199,6 +199,35 @@ def update_task(task_id):
     if 'frozen' in data:
         task.frozen = data['frozen']
 
+    # Note linking. Presence in the payload (not truthiness) is the trigger so
+    # an explicit null clears the link. `note_id` wins over `note_title` when
+    # both are sent; `note_title` alone resolves the note by title (first
+    # match). The displayed label (`note_title` in to_dict) is always the
+    # linked note's own title, so all we settle on here is the note_id.
+    if 'note_id' in data or 'note_title' in data:
+        if 'note_id' in data:
+            new_note_id = data.get('note_id')  # None clears; note_id wins
+        elif data.get('note_title') is None:
+            new_note_id = None  # explicit null label clears the link
+        else:
+            note = (Note.query.filter_by(title=data['note_title'])
+                    .order_by(Note.id).first())
+            if note is None:
+                return jsonify({'error': f"no note titled {data['note_title']!r}"}), 400
+            new_note_id = note.id
+        if new_note_id is not None and db.session.get(Note, new_note_id) is None:
+            return jsonify({'error': f'note {new_note_id} not found'}), 400
+        task.note_id = new_note_id
+        # Linking a note with open subtasks pulls a done task back to doing —
+        # same two-way sync rule as add_subtask. Runs after the status block so
+        # an explicit status='done' in this same request still wins (it checks
+        # every subtask, leaving nothing for the sync to pull back on). No-op
+        # for tasks without open subtasks.
+        task.sync_status_from_subtasks()
+
+    # `old_value`/`new` are full to_dict snapshots; the changelog delta is a
+    # downstream diff of the two, so note_id only surfaces in it when it
+    # actually changed (unchanged links stay out of the diff — lean by design).
     record_change('update', 'task', task.id, old=old_value, new=task.to_dict())
     db.session.commit()
 
