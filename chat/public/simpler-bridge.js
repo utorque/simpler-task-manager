@@ -1,3 +1,84 @@
+/* Clipboard polyfill for Chainlit's message "copy" button.
+ *
+ * Chainlit builds a `new ClipboardItem(...)` and calls
+ * `navigator.clipboard.write(...)`. Over plain HTTP (isSecureContext ===
+ * false) — how the assistant is often served internally — `ClipboardItem`
+ * and the async clipboard API are undefined, so the button throws
+ * "Failed to copy: ReferenceError: ClipboardItem is not defined". Shim the
+ * missing pieces and fall back to a hidden-textarea execCommand copy (the
+ * same fallback the shell uses in src/static/js/app.js). No-op wherever the
+ * native APIs already exist (secure contexts), so modern browsers are
+ * untouched. */
+(function installClipboardPolyfill() {
+    function legacyCopyText(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text == null ? '' : String(text);
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        return ok;
+    }
+
+    // Pull a text/plain string out of a ClipboardItem-like object (native or
+    // our shim). Returns a Promise<string>.
+    function itemText(item) {
+        try {
+            if (item && typeof item.getType === 'function') {
+                return item.getType('text/plain').then(function (blob) {
+                    return blob && typeof blob.text === 'function' ? blob.text() : '';
+                }, function () { return ''; });
+            }
+        } catch (e) { /* fall through */ }
+        return Promise.resolve('');
+    }
+
+    if (typeof window.ClipboardItem === 'undefined') {
+        window.ClipboardItem = function ClipboardItem(items) {
+            this._items = items || {};
+        };
+        window.ClipboardItem.prototype.getType = function (type) {
+            var val = this._items[type];
+            if (val instanceof Blob) return Promise.resolve(val);
+            if (val && typeof val.then === 'function') return Promise.resolve(val);
+            return Promise.resolve(new Blob([val == null ? '' : String(val)], { type: type }));
+        };
+    }
+
+    if (!navigator.clipboard) {
+        try {
+            Object.defineProperty(navigator, 'clipboard', { value: {}, configurable: true });
+        } catch (e) {
+            try { navigator.clipboard = {}; } catch (e2) { return; }
+        }
+    }
+
+    if (typeof navigator.clipboard.writeText !== 'function') {
+        try {
+            navigator.clipboard.writeText = function (text) {
+                return legacyCopyText(text)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('copy command was unsuccessful'));
+            };
+        } catch (e) { /* read-only clipboard: nothing more we can do */ }
+    }
+
+    if (typeof navigator.clipboard.write !== 'function') {
+        try {
+            navigator.clipboard.write = function (items) {
+                return itemText((items || [])[0]).then(function (text) {
+                    return navigator.clipboard.writeText(text);
+                });
+            };
+        } catch (e) { /* read-only clipboard: nothing more we can do */ }
+    }
+})();
+
 /* Bridge the Simpler shell's space filter into the Chainlit backend.
  *
  * The assistant iframe is same-origin with the shell, so both share

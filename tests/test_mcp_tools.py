@@ -6,11 +6,13 @@ network involved. Auth flows through the API_TOKEN bearer path, so every
 mutation here also exercises the actor='agent' audit attribution.
 """
 
+import json
+
 import httpx
 import pytest
 
 from conftest import login  # noqa: F401  (re-exported fixture helpers)
-from models import db, ChangeLog, Note, Task
+from models import db, ChangeLog, Note, Subtask, Task
 import mcp_server.server as mcp_srv
 from mcp.server.fastmcp.exceptions import ToolError
 
@@ -147,6 +149,103 @@ def test_update_task_clamps_priority_and_requires_fields(mcp_client):
 
     with pytest.raises(ToolError, match='No fields'):
         mcp_srv.update_task(task['id'])
+
+
+def test_update_task_links_note_by_id(mcp_client):
+    note = mcp_srv.create_note('study', title='design doc')
+    task = mcp_srv.create_task(title='promote me')
+    assert task['note_id'] is None
+
+    linked = mcp_srv.update_task(task['id'], note_id=note['id'])
+    assert linked['note_id'] == note['id']
+    # note_title is resolved from the linked note automatically.
+    assert linked['note_title'] == 'design doc'
+
+
+def test_update_task_links_note_by_title_first_match(mcp_client):
+    first = mcp_srv.create_note('study', title='shared name')
+    second = mcp_srv.create_note('work', title='shared name')
+    task = mcp_srv.create_task(title='link by title')
+
+    linked = mcp_srv.update_task(task['id'], note_title='shared name')
+    # First match (lowest id) wins when several notes share a title.
+    assert linked['note_id'] == first['id'] != second['id']
+    assert linked['note_title'] == 'shared name'
+
+
+def test_update_task_note_id_wins_over_note_title(mcp_client):
+    real = mcp_srv.create_note('study', title='real target')
+    task = mcp_srv.create_task(title='conflict')
+
+    linked = mcp_srv.update_task(
+        task['id'], note_id=real['id'], note_title='some other label')
+    assert linked['note_id'] == real['id']
+    # The displayed label follows the id-resolved note, not the passed title.
+    assert linked['note_title'] == 'real target'
+
+
+def test_update_task_clears_note_link_with_null(mcp_client):
+    note = mcp_srv.create_note('study', title='temp link')
+    task = mcp_srv.create_task(title='unlink me')
+    mcp_srv.update_task(task['id'], note_id=note['id'])
+
+    cleared = mcp_srv.update_task(task['id'], note_id=None)
+    assert cleared['note_id'] is None
+    assert cleared['note_title'] is None
+
+
+def test_update_task_unknown_note_rejected(mcp_client):
+    task = mcp_srv.create_task(title='bad link')
+    with pytest.raises(ToolError, match='not found'):
+        mcp_srv.update_task(task['id'], note_id=999999)
+    with pytest.raises(ToolError, match='no note titled'):
+        mcp_srv.update_task(task['id'], note_title='does not exist')
+
+
+def test_update_task_to_done_with_note_link_stays_done(mcp_client):
+    note = mcp_srv.create_note('study', title='completion source')
+    task = mcp_srv.create_task(title='finish')
+
+    done = mcp_srv.update_task(task['id'], status='done', note_id=note['id'])
+    # Moving to done works normally regardless of the note link.
+    assert done['status'] == 'done'
+    assert done['completed'] is True
+    assert done['note_id'] == note['id']
+
+
+def test_linking_note_pulls_done_task_with_open_subtask_back_to_doing(mcp_client, app):
+    # Edge state: a done task that still has an open subtask (the same two-way
+    # sync add_subtask relies on). Linking a note must re-run the sync and pull
+    # it back to doing.
+    with app.app_context():
+        note = Note(space_id=1, title='reopener')
+        task = Task(title='stale done', status='done', completed=True)
+        task.subtasks.append(Subtask(title='still open', done=False, position=0))
+        db.session.add_all([note, task])
+        db.session.commit()
+        task_id, note_id = task.id, note.id
+
+    reopened = mcp_srv.update_task(task_id, note_id=note_id)
+    assert reopened['status'] == 'doing'
+    assert reopened['note_id'] == note_id
+
+
+def test_note_id_stays_out_of_changelog_delta_when_unchanged(mcp_client, app):
+    note = mcp_srv.create_note('study', title='sticky')
+    task = mcp_srv.create_task(title='diff me')
+    mcp_srv.update_task(task['id'], note_id=note['id'])
+
+    # An unrelated edit on an already-linked task: note_id is identical in the
+    # old and new snapshots, so a downstream diff leaves it out of the delta.
+    mcp_srv.update_task(task['id'], title='renamed')
+    with app.app_context():
+        entry = (ChangeLog.query
+                 .filter_by(entity_type='task', entity_id=task['id'], action='update')
+                 .order_by(ChangeLog.id.desc()).first())
+        old = json.loads(entry.old_value)
+        new = json.loads(entry.new_value)
+    assert old['note_id'] == new['note_id'] == note['id']
+    assert old['title'] != new['title']
 
 
 def test_subtask_two_way_sync_via_tools(mcp_client):

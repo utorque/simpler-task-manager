@@ -51,6 +51,65 @@ def test_create_task_without_note_has_null_link(client):
     assert body['note_title'] is None
 
 
+# ===== PUT /api/tasks/<id> note (re)linking =====
+
+def test_update_task_links_and_clears_note(client, sample_note):
+    login(client)
+    task_id = client.post('/api/tasks', json={'title': 'retro link'}).get_json()['id']
+
+    linked = client.put(f'/api/tasks/{task_id}',
+                        json={'note_id': sample_note.id}).get_json()
+    assert linked['note_id'] == sample_note.id
+    assert linked['note_title'] == sample_note.title
+
+    cleared = client.put(f'/api/tasks/{task_id}', json={'note_id': None}).get_json()
+    assert cleared['note_id'] is None
+    assert cleared['note_title'] is None
+
+
+def test_update_task_links_note_by_title(client, sample_note):
+    login(client)
+    task_id = client.post('/api/tasks', json={'title': 'by title'}).get_json()['id']
+
+    linked = client.put(f'/api/tasks/{task_id}',
+                        json={'note_title': sample_note.title}).get_json()
+    assert linked['note_id'] == sample_note.id
+
+
+def test_update_task_note_id_wins_over_note_title(client, sample_note):
+    login(client)
+    other = client.post('/api/notes', json={
+        'space_id': 1, 'title': 'decoy label'}).get_json()
+    task_id = client.post('/api/tasks', json={'title': 'conflict'}).get_json()['id']
+
+    linked = client.put(f'/api/tasks/{task_id}', json={
+        'note_id': sample_note.id, 'note_title': other['title']}).get_json()
+    assert linked['note_id'] == sample_note.id
+    assert linked['note_title'] == sample_note.title
+
+
+def test_update_task_unknown_note_is_400(client, sample_note):
+    login(client)
+    task_id = client.post('/api/tasks', json={'title': 'bad'}).get_json()['id']
+
+    assert client.put(f'/api/tasks/{task_id}',
+                     json={'note_id': 99999}).status_code == 400
+    assert client.put(f'/api/tasks/{task_id}',
+                     json={'note_title': 'no such note'}).status_code == 400
+
+
+def test_update_task_note_link_leaves_done_untouched_without_open_subtasks(client, sample_note):
+    login(client)
+    task_id = client.post('/api/tasks', json={
+        'title': 'done + note', 'status': 'done'}).get_json()['id']
+
+    body = client.put(f'/api/tasks/{task_id}',
+                     json={'note_id': sample_note.id}).get_json()
+    # No open subtasks ⇒ the two-way sync is a no-op; the task stays done.
+    assert body['status'] == 'done'
+    assert body['note_id'] == sample_note.id
+
+
 # ===== promote route tags drafts =====
 
 def test_promote_drafts_carry_note_id(client, sample_note, stub_ai_provider):

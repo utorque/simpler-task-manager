@@ -52,6 +52,11 @@ mcp = FastMCP(
 
 TASK_STATUSES = ('todo', 'doing', 'blocked', 'done')
 
+# Distinguishes "argument omitted" from an explicit null for tri-state params
+# (e.g. note_id: leave-unchanged vs. clear-the-link). A bare None can't tell
+# the two apart, and null is a meaningful value the caller may want to send.
+_UNSET = object()
+
 # Module-level client so the test suite can swap in an httpx.WSGITransport
 # pointed at the Flask test app (same tool code, no network).
 _client = None
@@ -336,12 +341,21 @@ def update_task(task_id: int, title: str | None = None,
                 description: str | None = None, space: str | None = None,
                 priority: int | None = None, deadline: str | None = None,
                 estimated_duration: int | None = None,
-                status: str | None = None, frozen: bool | None = None) -> dict:
+                status: str | None = None, frozen: bool | None = None,
+                note_id: int | None = _UNSET,
+                note_title: str | None = _UNSET) -> dict:
     """Update fields of a task; omitted fields stay unchanged. `priority` is
     clamped to 0-10; `deadline` ISO-8601; `status` todo/doing/blocked/done
     (moving to done completes the task and checks its subtasks); `frozen`
-    pins the task so the auto-scheduler won't move it. Returns the updated
-    task."""
+    pins the task so the auto-scheduler won't move it.
+
+    Note linking: `note_id` sets the note this task is linked to (pass null to
+    unlink); `note_title` is the label shown alongside the link. Give
+    `note_title` alone to link by title (first match) instead of id. When both
+    are given `note_id` wins. Linking a note to a done task with open subtasks
+    pulls it back to doing (moving to done still works regardless). Omitting
+    both leaves the current link untouched. Returns the updated task (including
+    `note_id` and `note_title`)."""
     payload = {}
     if title is not None:
         payload['title'] = title
@@ -360,6 +374,12 @@ def update_task(task_id: int, title: str | None = None,
         payload['status'] = status
     if frozen is not None:
         payload['frozen'] = frozen
+    # Forward note fields only when the caller passed them (null is meaningful:
+    # it clears the link), so an omitted arg never disturbs the current note.
+    if note_id is not _UNSET:
+        payload['note_id'] = note_id
+    if note_title is not _UNSET:
+        payload['note_title'] = note_title
     if not payload:
         raise ToolError('No fields to update — pass at least one.')
     return _put(f'/api/tasks/{task_id}', json=payload)
