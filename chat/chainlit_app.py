@@ -211,16 +211,12 @@ def selected_space_ids() -> list[int] | None:
         return None
 
 
-# ===== Starters (tasks in Doing) + composer commands ==========================
+# ===== Starter (pin staged tasks/notes) + composer commands ==================
 
 async def build_starter_specs() -> list[dict]:
-    doing = []
-    if simpler_client.configured():
-        try:
-            doing = await simpler_client.list_tasks(status='doing')
-        except SimplerAPIError:
-            doing = []
-    return commands.build_starters(doing)
+    # A single static starter (pin the user's staged tasks/notes) — no board
+    # fetch needed; the staged set is resolved client-side by the bridge.
+    return commands.build_starters()
 
 
 @cl.set_starters
@@ -284,6 +280,15 @@ async def on_pin_refs(refs):
     composer with references to everything staged. Works on a running
     conversation too, exactly like clicking each item's starter."""
     if not isinstance(refs, list):
+        return
+    if not refs:
+        # The starter was clicked with nothing staged — point the user at the
+        # pin buttons rather than sitting silent.
+        await cl.Message(
+            content='Nothing is pinned yet. On the board or in Notes, click the '
+                    'robot button on a task/note to work on it here — or '
+                    'Ctrl+click it to stage several, then come back and hit '
+                    f'"{commands.PIN_STARTER_LABEL}".').send()
         return
     seeds = []
     injected = False

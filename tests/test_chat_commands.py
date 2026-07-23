@@ -113,21 +113,16 @@ def test_unknown_command_errors():
     assert 'Unknown command' in error
 
 
-def test_build_starters_doing_tasks_first():
-    doing = [{'id': 5, 'title': 'Ship the thing'}]
-    starters = commands.build_starters(doing)
-    assert starters[0]['command'] == 'task'
-    assert 'Ship the thing' in starters[0]['label']
-    # Generic starters follow.
-    assert any(s['command'] is None for s in starters)
-
-
-def test_build_starters_limits_and_works_empty():
-    many = [{'id': i, 'title': f't{i}'} for i in range(20)]
-    starters = commands.build_starters(many)
-    task_starters = [s for s in starters if s['command'] == 'task']
-    assert len(task_starters) == 6
-    assert commands.build_starters([])  # generic ones only, never empty
+def test_build_starters_single_pin_starter():
+    # One starter now: pin the user's staged tasks/notes. The board no longer
+    # drives the starter list, so doing-tasks/limit are ignored.
+    starters = commands.build_starters()
+    assert len(starters) == 1
+    assert starters[0]['label'] == commands.PIN_STARTER_LABEL
+    assert starters[0]['command'] is None
+    # Ignoring the board argument is part of the contract.
+    assert commands.build_starters([{'id': 5, 'title': 'Ship it'}]) == starters
+    assert commands.build_starters([]) == starters
 
 
 # ===== Issue 003.01: emoji labels + prefill-not-send ==========================
@@ -137,32 +132,25 @@ def _is_emoji(char: str) -> bool:
 
 
 def test_build_starters_emoji_in_label():
-    doing = [{'id': 5, 'title': 'Ship the thing'}]
-    for spec in commands.build_starters(doing):
+    for spec in commands.build_starters():
         assert _is_emoji(spec['label'][0]), spec['label']
         assert not spec.get('icon')  # no icon-font dependency
 
 
-def test_task_starter_has_command_and_seed():
-    doing = [{'id': 12, 'title': 'Write report'}]
-    starters = commands.build_starters(doing)
-    task_starter = starters[0]
-    assert task_starter['command'] == 'task'
-    assert task_starter['prefill'] == '#12 — '
-    for generic in starters[1:]:
-        assert generic['command'] is None
-        assert generic['prefill']  # the full seed prompt, editable
+def test_pin_starter_has_seed_but_no_command():
+    spec = commands.build_starters()[0]
+    # No slash command — the bridge resolves the staged set client-side.
+    assert spec['command'] is None
+    assert spec['prefill']  # graceful-degradation seed if the bridge is absent
 
 
 def test_starter_seed_not_in_message():
-    doing = [{'id': 12, 'title': 'Write report'}]
-    for spec in commands.build_starters(doing):
+    for spec in commands.build_starters():
         assert 'message' not in spec  # seed lives only in 'prefill'
 
 
 def test_starter_by_label_lookup():
-    doing = [{'id': 12, 'title': 'Write report'}]
-    starters = commands.build_starters(doing)
+    starters = commands.build_starters()
     spec = commands.starter_by_label(starters[0]['label'], starters)
     assert spec is starters[0]
     # Whitespace-tolerant (DOM textContent may pad) + unknown -> None.

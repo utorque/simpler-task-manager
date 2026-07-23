@@ -830,18 +830,18 @@ function assistantEnabled() {
     return !!document.getElementById('view-assistant');
 }
 
-// Hand a task or note over to the assistant. The pins wait in localStorage as
-// a queue rather than being posted to the iframe directly: on the first visit
-// the iframe does not exist yet (lazy-loaded by switchDestination).
-// chat/public/simpler-bridge.js drains the queue once the assistant is visible;
-// the chat backend injects each task (+ its linked note) / note into the thread
-// and seeds the composer with their refs.
-//
-// `stay` (Ctrl/Cmd+click on the robot button) pins without opening the
-// assistant, so several tasks and/or notes can be gathered first; a plain click
-// pins and switches over. The queue is only delivered when the assistant is on
-// screen, so staging in the background never drains it early.
+// Stage a task or note for the assistant. Pins accumulate in a localStorage
+// queue; delivery is explicit (never a background poll):
+//   - Ctrl/Cmd+click (`stay`) stages the item and stays put, so several
+//     tasks/notes can be gathered. The user then opens the assistant and clicks
+//     its one starter ("Work on my pinned tasks") to pull them all in.
+//   - A plain click stages the item, opens the assistant, and asks the bridge
+//     to flush the queue right away — the one-click "work on this now" path.
+// chat/public/simpler-bridge.js does the flushing; the chat backend
+// (on_pin_refs) injects each task (+ its linked note) / note and seeds the
+// composer with their refs.
 const ASSISTANT_PIN_QUEUE_KEY = 'assistantPinQueue';
+const ASSISTANT_PIN_FLUSH_KEY = 'assistantPinFlush';
 
 function readAssistantPinQueue() {
     try {
@@ -858,17 +858,22 @@ function pinToAssistant(kind, id, stay) {
     if (!queue.some(p => p.kind === kind && p.id === id)) {
         queue.push({ kind, id, ts: Date.now() });
     }
-    if (stay) {
-        // Stage only: write the queue and flag the assistant tab with the count.
-        localStorage.setItem(ASSISTANT_PIN_QUEUE_KEY, JSON.stringify(queue));
-        updateAssistantPinBadge();
-        return;
-    }
-    // Reveal the iframe first, THEN write — the storage event the write fires
-    // reaches an already-visible bridge, which drains the queue immediately.
-    switchDestination('assistant');
     localStorage.setItem(ASSISTANT_PIN_QUEUE_KEY, JSON.stringify(queue));
     updateAssistantPinBadge();
+    if (stay) return;                    // Ctrl/Cmd+click: stage only, don't leave
+
+    // Plain click: open the assistant and deliver the staged set immediately.
+    const frame = document.getElementById('assistantFrame');
+    const loaded = !!(frame && frame.src);
+    switchDestination('assistant');      // loads the iframe on first visit
+    if (loaded && frame.contentWindow) {
+        // Live iframe: tell the bridge to flush now (reliable, not polled).
+        frame.contentWindow.postMessage(
+            JSON.stringify({ type: 'simpler-pin-flush' }), window.location.origin);
+    } else {
+        // Cold iframe: leave a flag the bridge honours once it boots.
+        localStorage.setItem(ASSISTANT_PIN_FLUSH_KEY, '1');
+    }
 }
 
 // Small count on the Assistant nav tab: how many tasks/notes are staged and
@@ -890,21 +895,6 @@ function updateAssistantPinBadge() {
         badge.textContent = String(n);
     } else if (badge) {
         badge.remove();
-    }
-}
-
-// The assistant's starters are the tasks in Doing, and the embedded Chainlit
-// only ships them in the config it fetches once per page load. Publishing a
-// revision of that set lets the bridge notice a board change and refresh the
-// iframe by itself — no F5 — while the welcome screen is up.
-function publishAssistantStartersRev() {
-    if (!assistantEnabled()) return;
-    const rev = tasks.filter(t => t.status === 'doing')
-        .map(t => `${t.id}:${t.title || ''}`)
-        .sort()
-        .join('|');
-    if (localStorage.getItem('assistantStartersRev') !== rev) {
-        localStorage.setItem('assistantStartersRev', rev);
     }
 }
 
@@ -1348,7 +1338,6 @@ function initSortable() {
 async function loadTasks() {
     const response = await fetch('/api/tasks?include_completed=true');
     tasks = await response.json();
-    publishAssistantStartersRev();
     renderAll();
 }
 

@@ -144,41 +144,34 @@ async def handle_command(command: str, content: str,
 
 # ===== Starters ===============================================================
 
-GENERIC_STARTERS = [
-    ('✨ What should I do now?',
-     'Looking at my open tasks, deadlines and priorities: what should I '
-     'work on right now? Pick one thing and help me start it.',
-     None),
-    ('✨ Plan my day',
-     'Help me plan today: go through what is on my plate and sketch a '
-     'realistic order of attack.',
-     None),
-]
+# The one starter on the assistant's welcome screen. Clicking it pulls in
+# whatever the user staged from the board/notes with the pin (robot) buttons.
+# The staged set lives in the browser (localStorage), so the bridge fills it in
+# on click — this label is matched VERBATIM by chat/public/simpler-bridge.js, so
+# keep the two in sync.
+PIN_STARTER_LABEL = '📌 Work on my pinned tasks'
 
 
-def build_starters(doing_tasks: list[dict], limit: int = 6) -> list[dict]:
-    """Starter specs (dicts, UI-agnostic → testable): one per task currently
-    in 'doing', then the generic ones. Labels open with an emoji char (always
-    renders — no icon-font dependency, so no 'icon' field).
+def build_starters(doing_tasks: list[dict] | None = None,
+                   limit: int = 6) -> list[dict]:
+    """The assistant's starters — just one now: pull the user's pinned
+    tasks/notes into the conversation. (`doing_tasks`/`limit` are accepted for
+    call-site compatibility but ignored; starters no longer mirror the board.)
+    The label opens with an emoji char (always renders — no icon-font
+    dependency, so no 'icon' field).
 
-    Clicking a starter does NOT auto-send a model message: the bridge
-    (chat/public/simpler-bridge.js) intercepts the click and the backend
-    prefills the composer with the editable 'prefill' seed. Task starters
-    additionally fire the /task command server-side so the full task
-    (+ linked note) lands in the context before the user sends."""
-    starters = [
+    Clicking it does NOT auto-send a model message: the bridge
+    (chat/public/simpler-bridge.js) intercepts the click, reads the staged set
+    and hands it to on_pin_refs, which injects each item and seeds the composer.
+    'prefill' is only the graceful-degradation seed used if the bridge is
+    absent (the seed lives in 'prefill', never 'message')."""
+    return [
         {
-            'label': f"▶ {task.get('title', '')}"[:60],
-            'prefill': f"#{task['id']} — ",
-            'command': 'task',
-        }
-        for task in doing_tasks[:limit]
+            'label': PIN_STARTER_LABEL,
+            'prefill': "Let's work on my pinned tasks.",
+            'command': None,
+        },
     ]
-    starters += [
-        {'label': label, 'prefill': prefill, 'command': command}
-        for label, prefill, command in GENERIC_STARTERS
-    ]
-    return starters
 
 
 def starter_by_label(label: str, starters: list[dict]):

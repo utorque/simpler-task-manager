@@ -19,7 +19,11 @@ browser ──▶ web (uvicorn asgi:app :53000)
   model per conversation (`CHAT_MODELS`).
 - **Slash commands** — `/task`, `/note`, `/tasks`, `/notes`, `/skill` inject
   workspace entities into the conversation (a task always brings its linked
-  note along). Starters are generated from the tasks currently in *Doing*.
+  note along).
+- **Pin to assistant** — the robot button on any board card or note row hands
+  it to the assistant. Ctrl+click stages several (the Assistant tab shows a
+  count); the welcome screen's one starter, *“Work on my pinned tasks”*, pulls
+  the whole staged set into the conversation.
 - **Space filter** — the chips above the chat scope `/tasks`, `/notes` and the
   per-space AI guidance injected into the system prompt.
 - **Agentic tools** — Simpler's MCP sidecar is pre-integrated (read AND write:
@@ -41,8 +45,8 @@ browser ──▶ web (uvicorn asgi:app :53000)
      sidecar) workspace access; unset = chat works but can't see tasks
    - optional: `CHAT_MODELS=modelA,modelB` for the model picker
 2. `docker compose up -d --build`
-3. Log in → **Assistant** tab (press `6`). Try: *“What's on my plate?”*, click
-   a starter, or `/task` and pick something.
+3. Log in → **Assistant** tab (press `6`). Try: *“What's on my plate?”*, pin a
+   task/note with its robot button, or `/task` and pick something.
 
 The compose file wires everything else: `SIMPLER_MCP_URL=http://mcp:8765/mcp`,
 `SANDBOX_MCP_URL=http://sandbox:8766/mcp`, and the shared `/workspace` volume.

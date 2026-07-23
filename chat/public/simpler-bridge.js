@@ -115,8 +115,7 @@
 
     function tick() {
         sync();
-        pumpPinnedTask();
-        reloadIfStartersStale();
+        tryFlush();
     }
 
     setInterval(tick, 2000);
@@ -127,116 +126,83 @@
     }
 
     /* "Work on this with the assistant": the shell's robot buttons (board
-     * cards and note rows, src/static/js/app.js) hand tasks/notes over through
-     * a localStorage queue (`assistantPinQueue`, a JSON array of
-     * {kind:'task'|'note', id}). A plain click also switches to the Assistant
-     * tab; Ctrl+click stages an item and stays put, so several can pile up
-     * before the user comes over.
+     * cards and note rows, src/static/js/app.js) STAGE tasks/notes into a
+     * localStorage queue (`assistantPinQueue`, a JSON array of
+     * {kind:'task'|'note', id}). Ctrl+click stages and stays put; a plain click
+     * stages and jumps to the Assistant tab. The nav tab shows the staged count.
      *
-     * localStorage rather than postMessage because the shell lazy-loads this
-     * iframe — the very first pin happens BEFORE this script exists, so the
-     * handoff has to be a value that waits for us, not an event. The queue is
-     * drained (read once and removed) only while this iframe is actually on
-     * screen, so background staging never delivers early; everything staged is
-     * then handed over together the moment the Assistant tab opens. The batch
-     * is re-posted every tick until the backend answers with its prefill (the
-     * socket may not be up yet on a cold iframe), then dropped.
-     *
-     * Backend side: @cl.on_window_message → on_pin_refs, same injection the
-     * task starters run. */
+     * Delivery is EXPLICIT, never a background poll (that is what "just doesn't
+     * pin" tripped on). The queue is flushed only when:
+     *   - the welcome screen's one starter is clicked (intercepted below), or
+     *   - the shell asks for it: a plain robot click posts `simpler-pin-flush`
+     *     into this iframe (already loaded), or leaves `assistantPinFlush` in
+     *     localStorage for a cold iframe to honour on boot.
+     * A flush reads+clears the queue and posts one `simpler-pin` batch, which
+     * @cl.on_window_message → on_pin_refs injects (task + linked note, or full
+     * note) and seeds the composer. It re-posts each tick until the backend's
+     * prefill answers (a cold socket may not be up yet), capped at 5 tries. */
     var PIN_QUEUE_KEY = 'assistantPinQueue';
-    var pendingPins = null;
+    var PIN_FLUSH_KEY = 'assistantPinFlush';
+    var PIN_STARTER_LABEL = '📌 Work on my pinned tasks';
+    var flush = null;                                 // {tries, refs} while in flight
 
-    // Only deliver while the Assistant view is visible: the parent hides this
-    // iframe (display:none) on other tabs, so a hidden frame has no offsetParent.
-    function assistantVisible() {
-        try {
-            var fe = window.frameElement;
-            if (!fe) return true;            // not framed (tests) → assume visible
-            return fe.offsetParent !== null;
-        } catch (e) {
-            return true;
-        }
+    function requestFlush() {
+        if (flush) { flush.tries = 0; }               // already gathering — retry now
+        else { flush = { tries: 0, refs: null }; }    // fresh: read the queue
+        tryFlush();
     }
 
-    function readPinnedRefs() {
-        var raw;
-        try {
-            raw = window.localStorage.getItem(PIN_QUEUE_KEY);
-            if (!raw) return;
-            window.localStorage.removeItem(PIN_QUEUE_KEY);
-        } catch (e) {
-            return;
-        }
-        var queue;
-        try { queue = JSON.parse(raw); } catch (e) { return; }
-        if (!Array.isArray(queue)) return;
-        var refs = [];
-        for (var i = 0; i < queue.length; i++) {
-            var p = queue[i];
-            if (p && p.id != null && (p.kind === 'task' || p.kind === 'note')) {
-                refs.push({ kind: p.kind, id: p.id });
-            }
-        }
-        if (!refs.length) return;
-        // A batch that arrives mid-flight (rapid staging) joins the pending one.
-        if (pendingPins) {
-            pendingPins.refs = pendingPins.refs.concat(refs);
-            pendingPins.tries = 0;
-        } else {
-            pendingPins = { refs: refs, tries: 0 };
-        }
-    }
-
-    function pumpPinnedTask() {
-        // Draining a hidden iframe would deliver staged pins into a conversation
-        // the user hasn't opened yet — wait until the Assistant view is on screen.
-        if (!assistantVisible()) return;
-        readPinnedRefs();
-        if (!pendingPins) return;
-        // The composer only exists once the chat session is mounted; posting
-        // before that goes nowhere (nothing relays it to the backend yet).
+    function tryFlush() {
+        if (!flush) return;
+        // The composer/socket must be up to relay the batch to the backend; on a
+        // cold iframe it may not be yet — stay pending and retry next tick.
         if (!document.getElementById('chat-input')) return;
-        if (pendingPins.tries++ > 5) {
-            pendingPins = null;
-            return;
+        if (flush.tries++ > 5) { flush = null; return; }
+        // Read + clear the queue once (the key is removed on first read); hold
+        // the refs so a retry re-posts the same batch instead of losing it.
+        if (flush.refs === null) {
+            var raw;
+            try {
+                raw = window.localStorage.getItem(PIN_QUEUE_KEY);
+                window.localStorage.removeItem(PIN_QUEUE_KEY);
+            } catch (e) { raw = null; }
+            var queue = [];
+            try { queue = raw ? JSON.parse(raw) : []; } catch (e) { queue = []; }
+            var refs = [];
+            if (Array.isArray(queue)) {
+                for (var i = 0; i < queue.length; i++) {
+                    var p = queue[i];
+                    if (p && p.id != null && (p.kind === 'task' || p.kind === 'note')) {
+                        refs.push({ kind: p.kind, id: p.id });
+                    }
+                }
+            }
+            flush.refs = refs;
         }
         window.postMessage(JSON.stringify({
             type: 'simpler-pin',
-            refs: pendingPins.refs
+            refs: flush.refs
         }), window.location.origin);
     }
 
-    // Same-origin parent writes fire `storage` here: pin without waiting for
-    // the next poll when the iframe is already loaded and visible.
-    window.addEventListener('storage', function (event) {
-        if (event.key === PIN_QUEUE_KEY) pumpPinnedTask();
+    // Cold-iframe flush request left by a plain robot click before this script
+    // existed: honour it once, then let tick retry until the socket is up.
+    try {
+        if (window.localStorage.getItem(PIN_FLUSH_KEY)) {
+            window.localStorage.removeItem(PIN_FLUSH_KEY);
+            requestFlush();
+        }
+    } catch (e) { /* no localStorage → nothing to flush */ }
+
+    // Live-iframe flush: the shell posts this straight into our window when a
+    // plain robot click switches over, so delivery is immediate, not polled.
+    window.addEventListener('message', function (event) {
+        var data = event.data;
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (e) { return; }
+        }
+        if (data && data.type === 'simpler-pin-flush') requestFlush();
     });
-
-    /* Starters are the tasks in Doing, and Chainlit ships them inside the
-     * config it fetches ONCE per page load — so a board change in the shell
-     * leaves them stale until F5. The shell publishes a revision string of its
-     * Doing set ('assistantStartersRev'); when it moves, reload the iframe —
-     * but only while the welcome screen is up (starters on screen, composer
-     * empty), the one state where a reload costs nothing. Mid-conversation the
-     * starters aren't visible anyway and the next New Chat gets them fresh. */
-    var startersRev = readStartersRev();
-
-    function readStartersRev() {
-        try { return window.localStorage.getItem('assistantStartersRev'); }
-        catch (e) { return null; }
-    }
-
-    function reloadIfStartersStale() {
-        var rev = readStartersRev();
-        if (rev === startersRev) return;
-        startersRev = rev;
-        if (pendingPins) return;                      // a pin is mid-flight
-        if (!document.getElementById('starters')) return;
-        var input = document.getElementById('chat-input');
-        if (input && input.value.trim()) return;      // don't eat a draft
-        window.location.reload();
-    }
 
     /* Starter prefill (issue 003.01): starters must not fire-and-send.
      *
@@ -255,9 +221,16 @@
         if (!button) return;
         event.preventDefault();
         event.stopImmediatePropagation();
+        var label = (button.textContent || '').trim();
+        // The one pin starter delivers the staged tasks/notes (resolved here
+        // from localStorage); every other starter goes through the backend.
+        if (label === PIN_STARTER_LABEL) {
+            requestFlush();
+            return;
+        }
         window.postMessage(JSON.stringify({
             type: 'simpler-starter-click',
-            label: (button.textContent || '').trim()
+            label: label
         }), window.location.origin);
     }, true);
 
@@ -299,7 +272,7 @@
             try { data = JSON.parse(data); } catch (e) { return; }
         }
         if (!data || data.type !== 'simpler-starter-prefill') return;
-        pendingPins = null;  // the backend answered: stop re-posting the pins
+        flush = null;        // the backend answered: stop re-posting the pins
         setComposerText(data.prefill || '');
     }
 
