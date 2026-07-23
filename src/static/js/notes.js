@@ -210,6 +210,10 @@ window.NotesView = (function () {
         container.innerHTML = '';
         // When viewing several spaces (or all), tag each note with its space.
         const showSpace = state.selectedSpaceIds === null || state.selectedSpaceIds.length > 1;
+        // The robot button mirrors the board card's: hand a note to the
+        // assistant (or Ctrl+click to stage it). Only shown when the assistant
+        // is mounted — assistantEnabled() is a global from app.js.
+        const assistantOn = typeof assistantEnabled === 'function' && assistantEnabled();
         for (const n of state.notes) {
             const title = n.title && n.title.trim() ? n.title : 'Untitled';
             const row = document.createElement('div');
@@ -219,6 +223,8 @@ window.NotesView = (function () {
             row.innerHTML = `
                 <div class="note-row-title">${escapeHtml(title)}
                     ${showSpace && spaceName(n.space_id) ? `<span class="note-row-space">${escapeHtml(spaceName(n.space_id))}</span>` : ''}
+                    ${assistantOn ? `<button type="button" class="note-row-assist"
+                        title="Work on this with the assistant (Ctrl+click to stage without opening)"><i class="fas fa-robot"></i></button>` : ''}
                 </div>
                 <div class="note-row-preview">${escapeHtml(previewContent(n.content_markdown))}</div>
                 <div class="note-row-time">${relativeTime(n.updated_at)}</div>
@@ -235,6 +241,17 @@ window.NotesView = (function () {
                     openNote(n);
                 }
             });
+            // Robot button: plain click hands the note over and opens the
+            // assistant; Ctrl/Cmd+click stages it without leaving Notes. Its own
+            // handler stops propagation so the row's open/select never fires.
+            const assistBtn = row.querySelector('.note-row-assist');
+            if (assistBtn) {
+                assistBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    pinToAssistant('note', n.id, e.ctrlKey || e.metaKey);
+                });
+            }
             container.appendChild(row);
         }
         updateDownloadButton();
