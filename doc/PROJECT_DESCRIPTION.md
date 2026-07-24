@@ -55,10 +55,10 @@ simpler-smart-calendar/
 │   ├── app.py                 # App factory only; registers blueprints
 │   ├── models.py              # Task, Space, ChangeLog, Note, Mailbox, CalendarSource
 │   ├── routes/                # Per-domain blueprints
-│   │   ├── pages.py           # /, /notes (deep link), /login, /logout
+│   │   ├── pages.py           # /, /notes (deep link), /n/<token> (public note), /login, /logout
 │   │   ├── tasks.py           # /api/tasks* (CRUD, parse, freeze, reorder)
 │   │   ├── spaces.py          # /api/spaces*
-│   │   ├── notes.py           # /api/notes* (CRUD, cleanify, promote-to-task)
+│   │   ├── notes.py           # /api/notes* (CRUD, cleanify, promote-to-task, public share)
 │   │   ├── mailboxes.py       # /api/mailboxes* (CRUD, messages, add-task)
 │   │   ├── calendar_sources.py# /api/calendar-sources*, /api/external-events
 │   │   └── schedule.py        # /api/schedule, /api/logs
@@ -155,7 +155,10 @@ Default spaces seeded on first run: `work` (Mon-Fri 9-17), `study` (unconstraine
 All mutation routes write through `audit.record_change()` so the entity mutation and its audit row land in **one transaction**.
 
 ### `notes`
-`id`, `space_id` (FK, **NOT NULL**), `title` (nullable — the list UI falls back to "Untitled"), `content_markdown` (raw markdown source), `created_at` / `updated_at`.
+`id`, `space_id` (FK, **NOT NULL**), `title` (nullable — the list UI falls back to "Untitled"), `content_markdown` (raw markdown source), `created_at` / `updated_at`. `to_dict()` also exposes `public_share_token` (the token of the note's public share, or `null` when unshared).
+
+### `note_shares`
+`id`, `note_id` (FK, **NOT NULL**, **UNIQUE** — at most one share per note), `token` (**UNIQUE**, random `secrets.token_urlsafe(16)`), `created_at`. A row is the note's single public read-only credential: anyone holding `/n/<token>` can view the note. "Stop sharing" **deletes** the row (the token is revoked, never reused; re-sharing mints a fresh one). Deleting the note cascades the share away (ORM `delete-orphan`).
 
 ### `mailboxes`
 | Column | Type | Description |
@@ -209,6 +212,9 @@ All `/api/*` routes require the session cookie (`@login_required`, JSON 401 othe
 - `GET/PUT/DELETE /api/notes/<id>` — PUT re-runs the title backfill on every save: linked tasks (`note_id`) whose title is still empty take the note's title; DELETE detaches linked tasks (`note_id → NULL`)
 - `POST /api/notes/<id>/cleanify` — → `{content}`; does NOT persist (the editor applies it and the debounced PUT autosave persists). Degrades to the original content on AI failure
 - `POST /api/notes/<id>/promote-to-task` — `{selected_text}` → task draft DTOs (space defaulting to the note's, `note_id` provenance tag, empty AI title borrows the note's); persists nothing
+- `POST /api/notes/<id>/share` — create (or return the existing) public read-only share → `{token}`; idempotent (an already-shared note keeps its token); audited (`action='share'`). The client builds the URL as `<origin>/n/<token>`
+- `DELETE /api/notes/<id>/share` — revoke the public share → 204; idempotent; audited (`action='unshare'`)
+- `GET /n/<token>` — **public, no auth** (the token is the credential). Server-rendered on every request, so it always shows the note's latest saved markdown, mounted in a read-only EasyMDE locked to preview mode with a "copy raw markdown" toolbar tool. An unknown/revoked token 404s (`noindex`)
 
 ### Mail (`src/routes/mailboxes.py`)
 - `GET /api/mailboxes` — DTOs with `has_password`, never the password
@@ -233,7 +239,7 @@ One page, one header:
 - **Destinations** are sections toggled client-side (no page reloads), deep-linkable via `#tasks / #notes / #mail / #calendar / #spaces`; the last destination is remembered (`localStorage`).
 - **Tasks**: kanban board (SortableJS: cross-column drag → `PUT {status}` only; same-column drag = manual reorder nudging just the dragged task's priority via `POST /api/tasks/reorder`; Done stays completion-time ordered, no intra-column sort there; modifier+mousedown never starts a drag — Shift/Ctrl/Alt clicks stay clicks even with hand jitter, so a sloppy Shift+click can't drop the card into a neighbouring column), space filter chips (persisted; click = one space, Ctrl+click = toggle several spaces into the filter, Alt+click = exclude a space — greyed-out chip, its tasks hidden until Alt+clicked again; "All spaces" resets both), per-column "+" inline create (Enter creates in that column; `restrict_space` only sent when exactly one space is visible), Doing column's magic button → "what do you want to do?" modal → `POST /api/tasks/auto-doing` moves the AI-matched to-dos into Doing, Done column capped at 30 most recently finished (`completed_at` desc). Board ⇄ Overview toggle persisted; the Overview has a persisted "Show done" toggle listing finished tasks most-recently-finished first.
 - **Calendar**: preserved behavior — FullCalendar with drag = reschedule + auto-freeze (Ctrl skips freeze), resize = duration change, sidebar task list with drag-to-reorder (same single-task priority nudge as the board).
-- **Notes** (`notes.js`, `NotesView` module, lazy init): space chips like the board (click = one space, Ctrl+click = multi-space view, Alt+click = exclude a space — greyed chip, its notes hidden; rows show a space tag when several spaces are visible; new notes land in the first visible selected space), EasyMDE source editor with the standard formatting toolbar (headings, lists, quote, code, link/image, preview, side-by-side — table and fullscreen deliberately omitted; side-by-side stays inside the notes layout via `sideBySideFullscreen: false`) plus the custom add-task/Cleanify/Undo actions. Existing notes open **rendered (preview mode)** — clicking the preview switches to edit mode; new/empty notes open straight in edit mode. Deferred persistence (no empty "Untitled" rows), debounced autosave (Ctrl+Enter flushes it immediately), Cleanify + single-step Undo, promote-selection-to-task.
+- **Notes** (`notes.js`, `NotesView` module, lazy init): space chips like the board (click = one space, Ctrl+click = multi-space view, Alt+click = exclude a space — greyed chip, its notes hidden; rows show a space tag when several spaces are visible; new notes land in the first visible selected space), EasyMDE source editor with the standard formatting toolbar (headings, lists, quote, code, link/image, preview, side-by-side — table and fullscreen deliberately omitted; side-by-side stays inside the notes layout via `sideBySideFullscreen: false`) plus the custom add-task/Cleanify/Undo actions and a **copy-raw-markdown** toolbar tool (copies the note's markdown source — present on both the private editor and the public share page). Existing notes open **rendered (preview mode)** — clicking the preview switches to edit mode; new/empty notes open straight in edit mode. Deferred persistence (no empty "Untitled" rows), debounced autosave (Ctrl+Enter flushes it immediately), Cleanify + single-step Undo, promote-selection-to-task. **Public sharing**: a Share button (next to Download in the notes toolbar, enabled once a note is open) POSTs `/api/notes/<id>/share`, then copies `<origin>/n/<token>` to the clipboard and flips to "Copy link"; a Stop-sharing button appears to revoke it. The `/n/<token>` page is a standalone server-rendered template (`public_note.html`) mounting a read-only, preview-locked EasyMDE that always reflects the note's latest saved markdown.
 - **Spaces** (`spaces.js`, `SpacesView` module, lazy init): space list + editor — name, description, **AI context markdown** (guidance injected into every AI task prompt), and per-weekday time windows. Replaces the old header-button modal.
 - **Mail** (`mail.js`, `MailView` module, lazy init): mailbox sidebar + add/edit modal, live inbox list, click a message → reader modal (full plain-text body, still read-only server-side), right-click (or Task button) → AI draft → shared confirm modal.
 - **`task_draft_modal.js`**: the shared "confirm this AI task draft" modal used by both promote-to-task and email-to-task (drafts are never silently persisted).

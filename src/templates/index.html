@@ -224,10 +224,23 @@
             <div class="notes-toolbar">
                 <!-- Same chips as the kanban board: click = one space, Ctrl+click = add/remove spaces -->
                 <div class="space-chips" id="notesSpaceChips"></div>
-                <button class="btn notes-download-btn" id="downloadNotesBtn"
-                        title="Download the notes in view as markdown (Ctrl+click notes in the list to download only those)">
-                    <i class="fas fa-download"></i> <span id="downloadNotesLabel">Download</span>
-                </button>
+                <div class="notes-toolbar-actions">
+                    <button class="btn notes-download-btn" id="downloadNotesBtn"
+                            title="Download the notes in view as markdown (Ctrl+click notes in the list to download only those)">
+                        <i class="fas fa-download"></i> <span id="downloadNotesLabel">Download</span>
+                    </button>
+                    <!-- Public read-only share of the OPEN note. Disabled until a note
+                         is open. Once shared the label flips to "Copy link" and the
+                         Stop-sharing button appears. -->
+                    <button class="btn notes-download-btn" id="shareNoteBtn" disabled
+                            title="Create a public read-only link to this note and copy it to the clipboard">
+                        <i class="fas fa-share-nodes"></i> <span id="shareNoteLabel">Share</span>
+                    </button>
+                    <button class="btn notes-download-btn notes-stop-share-btn" id="stopShareBtn" style="display: none;"
+                            title="Revoke the public link for this note">
+                        <i class="fas fa-link-slash"></i> Stop sharing
+                    </button>
+                </div>
             </div>
             <div class="notes-layout">
                 <aside class="notes-list-panel">

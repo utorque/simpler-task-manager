@@ -3,7 +3,7 @@
 A self-hosted workspace that unifies **tasks, calendar, notes, and mail** around shared *Spaces* — with AI-powered capture everywhere and automatic scheduling. Built for ADHD workflows: one page, one header, everything reachable in as few clicks (or keystrokes) as possible.
 
 - **Tasks** — kanban board home (`todo / doing / blocked / done`), space filter chips, drag between columns, inline create; grouped-by-space overview (with a show-done toggle, most recently finished first) as the secondary view
-- **Notes** — space-scoped markdown capture (full EasyMDE toolbar) with AI "Cleanify" and promote-selection-to-task
+- **Notes** — space-scoped markdown capture (full EasyMDE toolbar) with AI "Cleanify", promote-selection-to-task, copy-raw-markdown, and public read-only sharing (a revocable `/n/<token>` link that always serves the note's latest version)
 - **Mail** — register IMAP inboxes (passwords encrypted at rest), browse live, click to read, right-click an email → AI-drafted task
 - **Calendar** — AI-parsed tasks auto-scheduled around your external ICS calendars and per-space time windows; drag to reschedule (and freeze)
 - **Spaces** — manage your contexts (work / study / …) with per-weekday scheduling windows and a per-space **AI context markdown** that guides every AI task creation (guide, not source — never copied into tasks)

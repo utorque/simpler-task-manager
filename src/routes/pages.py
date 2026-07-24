@@ -1,6 +1,8 @@
 """Server-rendered pages + session auth (login/logout)."""
 
-from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
+
+from models import NoteShare
 
 pages_bp = Blueprint('pages', __name__)
 
@@ -21,6 +23,22 @@ def notes_page():
     if not session.get('authenticated'):
         return redirect(url_for('pages.login'))
     return redirect('/#notes')
+
+
+@pages_bp.route('/n/<token>')
+def public_note(token):
+    """Public, read-only view of a shared note — NO auth (the token is the
+    credential). Built server-side on every request, so it always renders the
+    note's latest saved markdown. A revoked (or never-issued) token 404s."""
+    share = NoteShare.query.filter_by(token=token).first()
+    if share is None or share.note is None:
+        abort(404)
+    note = share.note
+    return render_template(
+        'public_note.html',
+        note_title=(note.title or '').strip() or 'Untitled note',
+        content_markdown=note.content_markdown or '',
+    )
 
 
 @pages_bp.route('/login', methods=['GET', 'POST'])

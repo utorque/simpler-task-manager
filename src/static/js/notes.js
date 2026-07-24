@@ -298,6 +298,102 @@ window.NotesView = (function () {
         }[c]));
     }
 
+    // --- Clipboard (shared by the copy-markdown tool and the share link copy) ---
+    function copyToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+        }
+        return Promise.resolve(fallbackCopy(text));
+    }
+
+    function fallbackCopy(text) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* no-op */ }
+        ta.remove();
+    }
+
+    // EasyMDE toolbar tool: copy the raw markdown source of the open note.
+    // Same tool ships on the public read-only share page.
+    function copyRawMarkdown(editor) {
+        copyToClipboard(editor.value()).then(() => setSaveIndicator('copied'));
+    }
+
+    // --- Public share of the open note ---
+    function shareUrl(token) {
+        return `${window.location.origin}/n/${token}`;
+    }
+
+    function currentShareToken() {
+        return state.currentNote && state.currentNote.public_share_token;
+    }
+
+    function updateShareButtons() {
+        const shareBtn = document.getElementById('shareNoteBtn');
+        const shareLabel = document.getElementById('shareNoteLabel');
+        const stopBtn = document.getElementById('stopShareBtn');
+        if (!shareBtn) return; // notes toolbar not on this page
+        const hasNote = !!state.currentNote;
+        const token = currentShareToken();
+        shareBtn.disabled = !hasNote;
+        shareLabel.textContent = token ? 'Copy link' : 'Share';
+        stopBtn.style.display = (hasNote && token) ? '' : 'none';
+    }
+
+    async function onShareClick() {
+        if (!state.currentNote) return;
+        const existing = currentShareToken();
+        if (existing) {
+            // Already shared → the button is a plain "copy the link again".
+            await copyToClipboard(shareUrl(existing));
+            setSaveIndicator('link copied');
+            return;
+        }
+        // First share: create the link, then copy it and flip the button.
+        const shareBtn = document.getElementById('shareNoteBtn');
+        shareBtn.disabled = true;
+        setSaveIndicator('creating link…');
+        try {
+            const resp = await api(`/api/notes/${state.currentNote.id}/share`, { method: 'POST' });
+            const token = resp && resp.token;
+            if (!token) { setSaveIndicator('share failed'); return; }
+            state.currentNote.public_share_token = token;
+            syncNoteInList(token);
+            await copyToClipboard(shareUrl(token));
+            setSaveIndicator('link copied');
+        } catch (e) {
+            setSaveIndicator('share failed');
+        } finally {
+            updateShareButtons();
+        }
+    }
+
+    async function onStopShareClick() {
+        if (!state.currentNote || !currentShareToken()) return;
+        setSaveIndicator('removing link…');
+        try {
+            await api(`/api/notes/${state.currentNote.id}/share`, { method: 'DELETE' });
+            state.currentNote.public_share_token = null;
+            syncNoteInList(null);
+            setSaveIndicator('link removed');
+        } catch (e) {
+            setSaveIndicator('remove failed');
+        } finally {
+            updateShareButtons();
+        }
+    }
+
+    // Keep the cached list DTO in step with the open note's share state, so
+    // reopening it (without a refetch) shows the right button.
+    function syncNoteInList(token) {
+        const row = state.notes.find(n => n.id === (state.currentNote && state.currentNote.id));
+        if (row) row.public_share_token = token;
+    }
+
     // --- Editor ---
     // Notes open rendered (EasyMDE preview mode) by default; double-clicking
     // the preview switches to edit mode. Empty notes go straight to edit — an
@@ -388,6 +484,9 @@ window.NotesView = (function () {
                 await loadNotes();
             }
             setSaveIndicator('saved');
+            // First save flips currentNote from null → persisted, enabling the
+            // per-note actions (share included).
+            setActiveButtonsDisabledState();
         } catch (e) {
             setSaveIndicator('save failed');
         }
@@ -410,6 +509,7 @@ window.NotesView = (function () {
         document.getElementById('undoCleanifyBtn').disabled = !(hasNote && state.lastCleaned !== null);
         document.getElementById('notePromoteBtn').disabled = !(hasNote && hasSelection);
         document.getElementById('deleteNoteBtn').disabled = !hasNote;
+        updateShareButtons();
     }
 
     async function cleanifyCurrentNote() {
@@ -523,6 +623,8 @@ window.NotesView = (function () {
                 'code', 'horizontal-rule', '|',
                 'link', 'image', '|',
                 'preview', 'side-by-side', '|',
+                { name: 'copy-markdown', action: copyRawMarkdown,
+                  className: 'fa fa-copy', title: 'Copy raw markdown' },
                 { name: 'add-task', action: promoteSelectionToTask,
                   className: 'fa fa-plus-square', title: 'Add as task' },
                 { name: 'cleanify', action: cleanifyCurrentNote,
@@ -559,6 +661,8 @@ window.NotesView = (function () {
     function initWiring() {
         document.getElementById('newNoteBtn').addEventListener('click', newNote);
         document.getElementById('downloadNotesBtn').addEventListener('click', downloadNotes);
+        document.getElementById('shareNoteBtn').addEventListener('click', onShareClick);
+        document.getElementById('stopShareBtn').addEventListener('click', onStopShareClick);
         // Esc clears the download selection (only when Notes is the visible
         // destination and the user is not typing somewhere).
         document.addEventListener('keydown', (e) => {
