@@ -111,6 +111,9 @@
                         action: copyRawMarkdown,
                         className: 'fa fa-copy',
                         title: 'Copy raw markdown',
+                        // The page is pinned to preview mode; without this
+                        // EasyMDE greys the button out, making it unusable.
+                        noDisable: true,
                     },
                 ],
             });

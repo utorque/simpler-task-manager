@@ -624,7 +624,11 @@ window.NotesView = (function () {
                 'link', 'image', '|',
                 'preview', 'side-by-side', '|',
                 { name: 'copy-markdown', action: copyRawMarkdown,
-                  className: 'fa fa-copy', title: 'Copy raw markdown' },
+                  className: 'fa fa-copy', title: 'Copy raw markdown',
+                  // EasyMDE greys custom buttons out in preview mode; notes
+                  // open in preview, so keep copy usable there too (it reads
+                  // the buffer, which is valid regardless of mode).
+                  noDisable: true },
                 { name: 'add-task', action: promoteSelectionToTask,
                   className: 'fa fa-plus-square', title: 'Add as task' },
                 { name: 'cleanify', action: cleanifyCurrentNote,
