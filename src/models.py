@@ -216,14 +216,53 @@ class Note(db.Model):
 
     space_rel = db.relationship('Space', backref='notes', foreign_keys=[space_id])
 
+    # Public read-only share (0-or-1 per note). uselist=False makes it a scalar;
+    # delete-orphan means dropping the note (or detaching the share) removes the
+    # link so a stale token can never resolve to a note.
+    share = db.relationship(
+        'NoteShare', backref='note', uselist=False,
+        cascade='all, delete-orphan', lazy='selectin')
+
     def to_dict(self):
         return {
             'id': self.id,
             'space_id': self.space_id,
             'title': self.title,
             'content_markdown': self.content_markdown or '',
+            # Opaque token of the note's public share, or None when not shared.
+            # The client builds the shareable URL from its own window.origin, so
+            # to_dict stays request-context-free and proxy-agnostic.
+            'public_share_token': self.share.token if self.share else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class NoteShare(db.Model):
+    """A public, read-only share of a Note.
+
+    One row per shared note (note_id is UNIQUE — creating a share for an
+    already-shared note reuses the existing token). The random `token` is the
+    only credential: anyone holding the `/n/<token>` URL can view the note's
+    latest markdown, rendered read-only. Deleting the row ("stop sharing") is
+    what revokes access — the token is not reused. No auth is attached to the
+    row itself; there is a single owner (APP_PASSWORD) and every share is that
+    owner's.
+    """
+    __tablename__ = 'note_shares'
+
+    id = db.Column(db.Integer, primary_key=True)
+    note_id = db.Column(db.Integer, db.ForeignKey('notes.id', ondelete='CASCADE'),
+                        nullable=False, unique=True, index=True)
+    token = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'note_id': self.note_id,
+            'token': self.token,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 

@@ -966,9 +966,32 @@ body {
     font-weight: 500;
 }
 
-.notes-download-btn:hover {
+.notes-download-btn:hover:not(:disabled) {
     border-color: #667eea;
     color: #667eea;
+}
+
+.notes-download-btn:disabled {
+    opacity: .5;
+    cursor: default;
+}
+
+/* Share / Download / Stop-sharing sit together on the right of the toolbar */
+.notes-toolbar-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* Stop-sharing reads as a "revoke" action */
+.notes-stop-share-btn {
+    border-color: #f0b2b2;
+    color: #c0392b;
+}
+
+.notes-stop-share-btn:hover:not(:disabled) {
+    border-color: #c0392b;
+    color: #c0392b;
 }
 
 .space-chips {

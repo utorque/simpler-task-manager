@@ -185,6 +185,28 @@ SCHEMA = {
             'updated_at': 'DATETIME',
         },
     },
+    'note_shares': {
+        'create': """
+            CREATE TABLE note_shares (
+                id INTEGER NOT NULL PRIMARY KEY,
+                note_id INTEGER NOT NULL UNIQUE REFERENCES notes(id) ON DELETE CASCADE,
+                token VARCHAR(64) NOT NULL UNIQUE,
+                created_at DATETIME
+            )
+        """,
+        'columns': {
+            'id': 'INTEGER NOT NULL PRIMARY KEY',
+            'note_id': 'INTEGER NOT NULL UNIQUE REFERENCES notes(id) ON DELETE CASCADE',
+            'token': 'VARCHAR(64) NOT NULL UNIQUE',
+            'created_at': 'DATETIME',
+        },
+        'indexes': {
+            'ix_note_shares_note_id':
+                'CREATE INDEX ix_note_shares_note_id ON note_shares (note_id)',
+            'ix_note_shares_token':
+                'CREATE INDEX ix_note_shares_token ON note_shares (token)',
+        },
+    },
     'mailboxes': {
         'create': """
             CREATE TABLE mailboxes (

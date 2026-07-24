@@ -1,5 +1,6 @@
-"""Notes CRUD, Cleanify, and promote-to-task routes."""
+"""Notes CRUD, Cleanify, promote-to-task, and public-share routes."""
 
+import secrets
 from datetime import datetime
 
 from flask import Blueprint, current_app, jsonify, request
@@ -7,7 +8,7 @@ from flask import Blueprint, current_app, jsonify, request
 from ai_parser import cleanify_note_with_ai, parse_task_with_ai
 from audit import record_change
 from auth import login_required
-from models import db, Note, Task
+from models import db, Note, NoteShare, Task
 from prompt_context import build_task_parse_prompt
 
 notes_bp = Blueprint('notes', __name__)
@@ -100,6 +101,41 @@ def delete_note(note_id):
     record_change('delete', 'note', note_id, old=old_value)
     db.session.commit()
 
+    return '', 204
+
+
+@notes_bp.route('/api/notes/<int:note_id>/share', methods=['POST'])
+@login_required
+def share_note(note_id):
+    """Create (or return the existing) public read-only share for a note.
+
+    Idempotent: sharing an already-shared note returns the same token rather
+    than minting a new one, so the previously copied link keeps working. The
+    response carries the token only — the client builds the URL from its own
+    origin (see Note.to_dict)."""
+    note = Note.query.get_or_404(note_id)
+
+    if note.share is None:
+        # token_urlsafe(16) → 22-char URL-safe token; unique+indexed in the DB.
+        note.share = NoteShare(token=secrets.token_urlsafe(16))
+        db.session.flush()
+        record_change('share', 'note', note.id, new={'token': note.share.token})
+        db.session.commit()
+
+    return jsonify({'token': note.share.token})
+
+
+@notes_bp.route('/api/notes/<int:note_id>/share', methods=['DELETE'])
+@login_required
+def stop_sharing_note(note_id):
+    """Revoke a note's public share. Idempotent — 204 whether or not one
+    existed. The token is dropped, not reused; re-sharing mints a fresh one."""
+    note = Note.query.get_or_404(note_id)
+    if note.share is not None:
+        old_token = note.share.token
+        note.share = None  # delete-orphan drops the NoteShare row
+        record_change('unshare', 'note', note.id, old={'token': old_token})
+        db.session.commit()
     return '', 204
 
 
