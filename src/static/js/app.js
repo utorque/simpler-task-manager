@@ -34,6 +34,17 @@ let selectedTaskIds = new Set();
 const TASK_STATUSES = ['todo', 'doing', 'blocked', 'done'];
 const DONE_COLUMN_LIMIT = 30;
 
+// ===== Mobile layer (phone ≤640px) =====
+// Every branch guarded by isMobile() is additive: on desktop these paths are
+// never taken, so the PC experience is byte-identical. The CSS half lives in
+// static/css/mobile.css (scoped to @media (max-width: 640px)).
+const MOBILE_MQ = window.matchMedia('(max-width: 640px)');
+function isMobile() { return MOBILE_MQ.matches; }
+
+function applyMobileBodyClass() {
+    document.body.classList.toggle('is-mobile', MOBILE_MQ.matches);
+}
+
 function parseStoredSpaceFilter() {
     const raw = localStorage.getItem('boardSpaceFilter');
     if (raw === null || raw === 'all') return null;
@@ -86,13 +97,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     helpModal = new bootstrap.Modal(document.getElementById('helpModal'));
     autoDoingModal = new bootstrap.Modal(document.getElementById('autoDoingModal'));
 
+    // Reflect the phone breakpoint on <body> (drives a few JS-side choices;
+    // the CSS layer keys off the media query directly).
+    applyMobileBodyClass();
+    MOBILE_MQ.addEventListener('change', applyMobileBodyClass);
+
     // Initialize calendar
     initCalendar();
 
-    // Initialize sortables (calendar sidebar list + kanban columns)
-    initSortable();
-    initBoardSortables();
+    // Initialize sortables (calendar sidebar list + kanban columns). Drag is a
+    // desktop affordance: on touch it fights the scroll-snap board and the
+    // page scroll, so we skip it on phones (status changes go through the card
+    // action sheet instead — see openCardActionSheet).
+    if (!isMobile()) {
+        initSortable();
+        initBoardSortables();
+    }
     initBoardInlineAdd();
+    initMobileMasterDetail();
 
     // Load initial data
     await Promise.all([loadTasks(), loadSpaces()]);
@@ -201,6 +223,9 @@ document.addEventListener('DOMContentLoaded', async function() {
 function switchDestination(destination) {
     if (currentDestination === destination) return;
     clearSelection();
+    // On phones, always land on a view's master (list) rather than a stale
+    // detail overlay. No-op on desktop (nothing carries this class there).
+    resetMobileDetail();
     currentDestination = destination;
 
     document.querySelectorAll('.app-view').forEach(v => v.style.display = 'none');
@@ -423,6 +448,15 @@ function wireTaskClickDelegation(containerId, selector) {
                 openTaskSourceNote(taskId);
                 return;
             }
+            // Phone-only "move / actions" button → status action sheet. The
+            // button is display:none on desktop, so this branch is a no-op
+            // there; the isMobile() guard is belt-and-suspenders.
+            if (e.target.closest('.board-card-move')) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (isMobile()) openCardActionSheet(taskId);
+                return;
+            }
         }
 
         // Inline priority edit (board card only): a plain click on the
@@ -495,6 +529,118 @@ async function cycleTaskStatus(taskId) {
     } else {
         showAlert('Error updating task', 'danger');
     }
+}
+
+// ===== Mobile: card action sheet (tap-based status change) =====
+// On phones drag is disabled, so the card "move" button opens this lightweight
+// bottom sheet. It reuses the existing mutation paths (status PUT, freeze,
+// edit modal) — no new server behaviour. It is a plain DOM overlay, not a
+// Bootstrap modal, so it never collides with the app's modal plumbing.
+function setTaskStatus(taskId, status) {
+    return fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+    }).then(async (r) => {
+        if (r.ok) {
+            await loadTasks();
+            if (calendar) calendar.refetchEvents();
+            showAlert(`→ ${STATUS_LABELS[status] || status}`, 'info');
+        } else {
+            showAlert('Error updating task', 'danger');
+        }
+    });
+}
+
+function closeCardActionSheet() {
+    const el = document.getElementById('mobileActionSheet');
+    if (el) el.remove();
+}
+
+function openCardActionSheet(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    closeCardActionSheet();
+
+    const statusRow = TASK_STATUSES.map(s => `
+        <button class="mobile-sheet-btn ${task.status === s ? 'current' : ''}" data-act="status" data-status="${s}">
+            ${STATUS_LABELS[s]}${task.status === s ? ' ✓' : ''}
+        </button>`).join('');
+
+    const sheet = document.createElement('div');
+    sheet.id = 'mobileActionSheet';
+    sheet.className = 'mobile-sheet-backdrop';
+    sheet.innerHTML = `
+        <div class="mobile-sheet" role="dialog" aria-label="Task actions">
+            <div class="mobile-sheet-title">${escapeHtml(task.title || '(untitled)')}</div>
+            <div class="mobile-sheet-group">${statusRow}</div>
+            <div class="mobile-sheet-group">
+                <button class="mobile-sheet-btn" data-act="freeze">${task.frozen ? '❄️ Unfreeze' : '❄️ Freeze'}</button>
+                <button class="mobile-sheet-btn" data-act="edit">Edit…</button>
+            </div>
+            <button class="mobile-sheet-btn mobile-sheet-cancel" data-act="cancel">Cancel</button>
+        </div>`;
+
+    sheet.addEventListener('click', (e) => {
+        const btn = e.target.closest('.mobile-sheet-btn');
+        if (!btn) { if (e.target === sheet) closeCardActionSheet(); return; }
+        const act = btn.dataset.act;
+        closeCardActionSheet();
+        if (act === 'status') setTaskStatus(taskId, btn.dataset.status);
+        else if (act === 'freeze') toggleTaskFreeze(taskId);
+        else if (act === 'edit') editTask(taskId);
+    });
+
+    document.body.appendChild(sheet);
+}
+
+// ===== Mobile: master/detail for the list views (Notes · Mail · Spaces) =====
+// On phones each of these is a full-width list; opening an item promotes the
+// detail panel to a full-screen overlay (CSS in mobile.css) with a Back button
+// we inject here. Delegated on the always-present list containers, so it works
+// regardless of the per-view lazy init. All gated by isMobile() → inert on PC.
+const MOBILE_DETAIL_VIEWS = [
+    { layout: '.notes-layout',  detail: '.notes-editor-panel',  openers: ['#notes-container', '#newNoteBtn'], itemSel: '.note-row' },
+    { layout: '.mail-layout',   detail: '.mail-main',           openers: ['#mailboxList'],                    itemSel: '.mailbox-row' },
+    { layout: '.spaces-layout', detail: '.spaces-editor-panel', openers: ['#spacesList', '#newSpaceBtn'],     itemSel: '.space-row' },
+];
+
+function openMobileDetail(layoutSel) {
+    if (!isMobile()) return;
+    document.querySelector(layoutSel)?.classList.add('mobile-detail-open');
+}
+
+function resetMobileDetail() {
+    document.querySelectorAll('.mobile-detail-open')
+        .forEach(el => el.classList.remove('mobile-detail-open'));
+}
+
+function initMobileMasterDetail() {
+    MOBILE_DETAIL_VIEWS.forEach(cfg => {
+        const detail = document.querySelector(cfg.detail);
+        if (detail && !detail.querySelector(':scope > .mobile-back-btn')) {
+            const back = document.createElement('button');
+            back.type = 'button';
+            back.className = 'btn mobile-back-btn';
+            back.innerHTML = '<i class="fas fa-arrow-left"></i> Back';
+            back.addEventListener('click', () => {
+                document.querySelector(cfg.layout)?.classList.remove('mobile-detail-open');
+            });
+            detail.prepend(back);
+        }
+        cfg.openers.forEach(sel => {
+            const el = document.querySelector(sel);
+            if (!el) return;
+            el.addEventListener('click', (e) => {
+                if (!isMobile()) return;
+                // A header "new" button always opens the (fresh) detail; a list
+                // container only opens when an actual row was tapped.
+                const isNewBtn = el.tagName === 'BUTTON';
+                if (!isNewBtn && !e.target.closest(cfg.itemSel)) return;
+                openMobileDetail(cfg.layout);
+            });
+        });
+    });
 }
 
 // ===== Kanban board =====
@@ -1092,6 +1238,9 @@ function renderBoardCard(task) {
                 <div class="board-card-side">
                     <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
                     <button type="button" class="board-card-addsub" title="Add subtask">+</button>
+                    <!-- Phone-only: opens the status/actions sheet (drag is
+                         disabled on touch). Hidden on desktop via mobile.css. -->
+                    <button type="button" class="board-card-move" title="Move / actions"><i class="fas fa-ellipsis-h"></i></button>
                 </div>
             </div>
             <div class="board-card-meta">
@@ -1275,9 +1424,16 @@ function openCardSubtaskInput(cardEl, taskId) {
 // Initialize FullCalendar
 function initCalendar() {
     const calendarEl = document.getElementById('calendar');
+    // Phones get an agenda-style list view + a slimmed toolbar (the week grid
+    // is unusable at ~380px). Desktop config is unchanged.
+    const mobileCal = isMobile();
     calendar = new FullCalendar.Calendar(calendarEl, {
-        initialView: 'timeGridWeek',
-        headerToolbar: {
+        initialView: mobileCal ? 'listWeek' : 'timeGridWeek',
+        headerToolbar: mobileCal ? {
+            left: 'prev,next',
+            center: 'title',
+            right: 'today'
+        } : {
             left: 'prev,next today',
             center: 'title',
             right: 'timeGridWeek,timeGridDay,dayGridMonth'

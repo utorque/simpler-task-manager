@@ -1,0 +1,324 @@
+/* =====================================================================
+   Simpler — mobile / phone layer
+   ---------------------------------------------------------------------
+   HARD RULE: everything that changes the desktop experience MUST live
+   inside the `@media (max-width: 640px)` block below. The only rules
+   allowed at the top level are display:none defaults for brand-new
+   mobile-only elements (the card "move" button, the master-detail back
+   buttons) — these elements do not exist in the desktop design, so
+   hiding them by default keeps the PC UI byte-identical while the media
+   query reveals them on phones.
+
+   Loaded AFTER style.css (see index.html), so within the media query its
+   rules win on equal specificity.
+   ===================================================================== */
+
+/* --- mobile-only elements: hidden everywhere by default --- */
+.board-card-move { display: none; }
+.mobile-back-btn { display: none; }
+
+/* --- Card action sheet (built by app.js openCardActionSheet, phone-only).
+   These nodes are only ever created on phones, so styling them at top level
+   cannot affect the desktop DOM. --- */
+.mobile-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1080;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-end;
+  animation: mobileSheetFade 0.15s ease;
+}
+@keyframes mobileSheetFade { from { opacity: 0; } to { opacity: 1; } }
+.mobile-sheet {
+  width: 100%;
+  background: #fff;
+  border-radius: 18px 18px 0 0;
+  padding: 12px 12px calc(16px + env(safe-area-inset-bottom));
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.18);
+  animation: mobileSheetUp 0.2s ease;
+}
+@keyframes mobileSheetUp { from { transform: translateY(24px); } to { transform: translateY(0); } }
+.mobile-sheet-title {
+  font-weight: 700;
+  color: #2d3748;
+  padding: 6px 8px 12px;
+  text-align: center;
+  border-bottom: 1px solid #edf2f7;
+  margin-bottom: 10px;
+}
+.mobile-sheet-group {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.mobile-sheet-group .mobile-sheet-btn { flex: 1 1 0; }
+.mobile-sheet-btn {
+  min-height: 46px;
+  border: 1px solid #e0e6ed;
+  border-radius: 12px;
+  background: #f7fafc;
+  color: #2d3748;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.mobile-sheet-btn.current {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border-color: transparent;
+}
+.mobile-sheet-cancel {
+  width: 100%;
+  margin-top: 2px;
+  background: #fff;
+  color: #718096;
+}
+
+/* ===================================================================== */
+@media (max-width: 640px) {
+
+  /* ---- Scroll model: the desktop shell is height-locked
+     (body/overflow:hidden, app-main = 100vh-58px). On phones we let the
+     page scroll naturally and pin the nav to the bottom. ---- */
+  html, body { overflow-y: auto; height: auto; -webkit-text-size-adjust: 100%; }
+
+  .app-main {
+    height: auto;
+    min-height: calc(100dvh - 58px);
+    overflow: visible;
+  }
+
+  /* ---- Header: brand + action icons on row 1, full-width capture on
+     row 2. The tab nav is lifted out to a fixed bottom bar (below). ---- */
+  .app-header {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 8px 12px;
+    position: sticky;
+    top: 0;
+    z-index: 1020;
+  }
+  .app-brand { order: 1; font-size: 16px; }
+  .app-actions { order: 2; margin-left: auto; gap: 2px; }
+  .app-action-btn { min-width: 40px; min-height: 40px; }
+  .quick-capture {
+    order: 3;
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
+    margin: 0;
+  }
+  .quick-capture input { min-height: 42px; }
+
+  /* ---- Bottom tab bar: reuse the existing #appNav markup, reflowed. ---- */
+  .app-nav {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 1030;
+    display: flex;
+    gap: 0;
+    justify-content: space-around;
+    align-items: stretch;
+    background: #fff;
+    border-top: 2px solid #e0e6ed;
+    padding: 4px 2px calc(4px + env(safe-area-inset-bottom));
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
+  }
+  .nav-tab {
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 2px;
+    font-size: 10px;
+    font-weight: 600;
+    border-width: 0;
+    border-radius: 10px;
+    min-height: 46px;
+    justify-content: center;
+  }
+  .nav-tab i { font-size: 17px; }
+  .nav-tab kbd { display: none; }
+  .nav-tab.active {
+    background: transparent;
+    color: #667eea;
+  }
+  .nav-tab.active i { color: #667eea; }
+  /* keep the assistant pin badge legible on the small tab */
+  .nav-tab .nav-pin-badge {
+    position: absolute;
+    transform: translate(14px, -10px);
+  }
+  .nav-tab { position: relative; }
+
+  /* Leave room so no view hides behind the fixed bottom bar. */
+  .app-view {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    padding: 12px 12px calc(72px + env(safe-area-inset-bottom));
+  }
+
+  /* ---- Toolbars & chips: allow horizontal scroll instead of squashing ---- */
+  .tasks-toolbar,
+  .notes-toolbar,
+  .assistant-toolbar { flex-wrap: wrap; gap: 8px; row-gap: 8px; }
+  .space-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .space-chips::-webkit-scrollbar { display: none; }
+
+  /* Bigger default tap targets for the small controls. */
+  .btn, .board-col-add, .view-tab { min-height: 38px; }
+
+  /* =================== TASKS / kanban =================== */
+  /* Full-width columns in a horizontal scroll-snap track; a sliver of the
+     next column peeks to advertise swipeability. Status changes are
+     tap-based (the "move" button opens an action sheet) since drag is
+     disabled on touch (initBoardSortables is skipped on mobile). */
+  .board {
+    height: calc(100dvh - 210px);
+    min-height: 360px;
+    gap: 10px;
+    /* Override the max-width:992px rule (flex-wrap:wrap) which would stack
+       the full-width columns vertically. Phones swipe horizontally. */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scroll-padding: 0 8px;
+    /* Full-height columns you swipe between (override desktop flex-start). */
+    align-items: stretch;
+  }
+  .board-col {
+    flex: 0 0 86%;
+    min-width: 86%;
+    max-width: 86%;
+    height: 100%;
+    scroll-snap-align: center;
+  }
+  .board-col-cards { overflow-y: auto; }
+
+  /* Mobile card "move / actions" button (revealed here only). */
+  .board-card-move {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: rgba(255, 255, 255, 0.85);
+    color: #4a5568;
+    border-radius: 8px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  /* Hover-only affordances don't exist on touch — pin them visible. */
+  .board-card-assist { color: #718096 !important; }
+  .note-row-assist { color: #718096 !important; }
+  /* Roomier cards + tap targets on the board. */
+  .board-card { padding: 12px; }
+  .board-card-priority { min-width: 26px; min-height: 26px; }
+
+  /* Overview: single column. */
+  #overviewView .space-overview-grid,
+  #overviewView .overview-cards { grid-template-columns: 1fr !important; }
+
+  /* =================== master / detail (Notes · Mail · Spaces) ===========
+     The list is the master (full-width, page scrolls). Opening an item
+     promotes the detail panel to a full-screen overlay with a Back button
+     (injected by app.js initMobileMasterDetail). ==================== */
+  .notes-layout,
+  .mail-layout,
+  .spaces-layout {
+    display: block;
+    height: auto;
+    gap: 0;
+  }
+  .notes-list-panel,
+  .mail-sidebar,
+  .spaces-list-panel {
+    width: 100%;
+    max-height: none;
+    border-radius: 12px;
+  }
+
+  /* Detail panels are out of the flow until their layout is opened. */
+  .notes-editor-panel,
+  .mail-main,
+  .spaces-editor-panel { display: none; }
+
+  .mobile-detail-open .notes-editor-panel,
+  .mobile-detail-open .mail-main,
+  .mobile-detail-open .spaces-editor-panel {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    background: #f5f7fa;
+    overflow-y: auto;
+    padding: 12px 12px calc(20px + env(safe-area-inset-bottom));
+  }
+
+  /* The injected Back button, shown at the top of an open overlay. */
+  .mobile-detail-open .mobile-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 12px;
+    padding: 8px 14px;
+    border: 1px solid #cbd5e0;
+    border-radius: 10px;
+    background: #fff;
+    color: #2d3748;
+    font-weight: 600;
+  }
+
+  .notes-editor-panel #noteTitle { max-width: 100%; }
+  .EasyMDEContainer .editor-toolbar { flex-wrap: wrap; }
+  .CodeMirror { min-height: 300px; }
+
+  /* =================== Calendar =================== */
+  /* Sidebar stacks above a list-view calendar (initCalendar picks the
+     mobile config). The page scrolls; nothing is height-locked. */
+  .calendar-layout { flex-direction: column; height: auto; gap: 12px; }
+  .calendar-sidebar { width: 100%; max-height: 40vh; }
+  .calendar-main { overflow: visible; }
+  .calendar-legend { font-size: 11px; }
+  .fc .fc-toolbar.fc-header-toolbar { flex-wrap: wrap; gap: 6px; }
+  .fc .fc-toolbar-title { font-size: 1.05rem; }
+
+  /* =================== Assistant =================== */
+  .app-view-assistant { height: calc(100dvh - 200px); min-height: 400px; }
+  .assistant-toolbar { padding: 8px 12px; }
+  /* The workspace file drawer is a desktop convenience; hide on phones. */
+  #workspaceDrawer { display: none !important; }
+
+  /* =================== Modals → full-screen sheets =================== */
+  .modal-dialog {
+    margin: 0;
+    max-width: 100%;
+    min-height: 100%;
+  }
+  .modal-content {
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  .modal-body { overflow-y: auto; }
+}
+
+/* Coarse-pointer safety net (tablets/phones that report a wide viewport but
+   no hover): keep the hover-only affordances reachable. Scoped to NEW-only
+   selectors + hover reveals so desktop mouse behaviour is untouched. */
+@media (hover: none) and (pointer: coarse) {
+  .board-card-assist,
+  .note-row-assist,
+  .note-row:hover .note-row-assist { color: #718096; }
+}

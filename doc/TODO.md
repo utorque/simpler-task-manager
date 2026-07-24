@@ -9,7 +9,7 @@
 - [ ] kanban intra-column ordering: currently priority/deadline-derived; add a dedicated `kanban_order` ordinal if it feels wrong in practice (PrePRD 000 out-of-scope 6)
 
 ## GOOD FEATURES
-- [ ] fully redo the UI to be nicer, more responsive, softer to the eye while prioritizing UX- Potentially change the stack ?
+- [~] fully redo the UI to be nicer, more responsive, softer to the eye while prioritizing UX- Potentially change the stack ? — **phone/responsive pass shipped 2026-07** (`static/css/mobile.css` + `isMobile()` branches; bottom nav, scroll-snap board, master-detail, tap action sheet; PC untouched). Still open: broader "softer to the eye" visual refresh and any stack change (stayed on vanilla-JS/no-build, backend already a clean REST API).
 - [ ] button to reschedule only for current filter
 - [ ] add audio task using infomaniak whisper api
 - [ ] add telegram bot with n8n

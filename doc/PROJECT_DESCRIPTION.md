@@ -36,6 +36,7 @@ An **Assistant destination** (6th tab, shortcut `6`) embeds a first-party [Chain
 - **Calendar**: FullCalendar.js
 - **Drag & Drop**: SortableJS (kanban columns + task list)
 - **Markdown editor**: EasyMDE (CodeMirror 5)
+- **Phone layer**: a mobile stylesheet (`static/css/mobile.css`) scoped entirely to `@media (max-width: 640px)`, loaded after `style.css`, plus `isMobile()`-gated branches in `app.js`. The desktop experience is byte-identical by construction (every mobile rule is inside the phone breakpoint; every mobile JS branch is guarded). See **Mobile / phone layer** under Frontend Architecture.
 
 ### Infrastructure
 - **Docker Compose** deploy, port 53000, `./instance` volume for the SQLite file
@@ -244,6 +245,19 @@ One page, one header:
 - **Mail** (`mail.js`, `MailView` module, lazy init): mailbox sidebar + add/edit modal, live inbox list, click a message → reader modal (full plain-text body, still read-only server-side), right-click (or Task button) → AI draft → shared confirm modal.
 - **`task_draft_modal.js`**: the shared "confirm this AI task draft" modal used by both promote-to-task and email-to-task (drafts are never silently persisted).
 
+### Mobile / phone layer (`static/css/mobile.css` + `isMobile()` branches in `app.js`)
+
+A progressive-enhancement layer for phones (`≤640px`), added without touching the desktop UX. **Hard rule**: all mobile CSS lives inside `@media (max-width: 640px)` (the only top-level rules are `display:none` defaults for brand-new mobile-only elements), and all mobile JS is gated behind `isMobile()` (`matchMedia('(max-width: 640px)')`) — so the PC experience is byte-identical. `body.is-mobile` is toggled reactively for any JS that needs it.
+
+- **Navigation**: the header nav reflows into a fixed **bottom tab bar** (icons + tiny labels, `env(safe-area-inset-bottom)`-padded); quick-capture becomes a full-width row; the page scrolls (desktop is height-locked, phones are not).
+- **Tasks**: the 4-column board becomes full-width **horizontal scroll-snap columns** (swipe between them, a sliver of the next peeks). Drag is disabled on touch (`initBoardSortables`/`initSortable` skipped when `isMobile()`); status changes go through a per-card **action sheet** (`openCardActionSheet` — a plain DOM bottom sheet, not a Bootstrap modal) reusing the existing status-PUT / freeze / edit paths. Hover-only card buttons are pinned visible.
+- **Notes / Mail / Spaces**: **master-detail** — the list is full-width; opening an item promotes the detail panel to a full-screen overlay with an injected **Back** button (`initMobileMasterDetail`; `.mobile-detail-open` on the layout, reset on destination switch).
+- **Calendar**: `initCalendar` picks a `listWeek` view + slimmed toolbar on phones; the sidebar stacks above.
+- **Assistant**: toolbar wraps, the workspace drawer is hidden, the Chainlit iframe (already responsive) fills the viewport.
+- **Modals**: render as full-screen sheets.
+
+Verification: a Playwright pass (`scripts/`/local harness) asserts no horizontal overflow at 360–1440px on every destination and screenshots each; desktop screenshots at 1024/1440 must be unchanged.
+
 ### Keyboard shortcuts (one coherent set — see the in-app `?` help modal)
 
 | Shortcut | Action |
@@ -333,6 +347,12 @@ Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remembe
 **Embedded assistant (built in)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `sandbox` (the assistant's isolated execution sidecar, internal network + shared `/workspace` volume). The Chainlit assistant itself runs inside the `web` container (`asgi.py` mounts it same-origin at `/assistant`), gated by the normal login via a session-cookie auth bridge. Set `API_TOKEN` (`openssl rand -hex 32`) to give it workspace access — **walkthrough: `doc/setup-assistant.md`**.
 
 ## Version History
+
+**2026-07 — Phone UI layer (responsive overhaul, PC untouched)**:
+- ✅ New `static/css/mobile.css` (all rules under `@media (max-width: 640px)`, loaded after `style.css`) + `isMobile()`-gated branches in `app.js` — a phone experience added with zero change to the desktop UX (byte-identical by construction; verified with a Playwright no-overflow pass at 360–1440px and unchanged desktop screenshots)
+- ✅ Bottom tab bar (reuses `#appNav`), full-width quick-capture, page-scroll model with safe-area insets
+- ✅ Tasks: full-width horizontal scroll-snap columns; drag disabled on touch (Sortable init skipped); per-card action sheet (`openCardActionSheet`) for tap-based status/freeze/edit, reusing existing mutation paths
+- ✅ Master-detail for Notes/Mail/Spaces (`initMobileMasterDetail`, full-screen overlay + injected Back button); `listWeek` calendar on phones; modals as full-screen sheets; assistant iframe fills the viewport (drawer hidden)
 
 **2026-07 — chat history: `steps.modes` write failure**:
 - ✅ Fixed `sqlite3.ProgrammingError: Error binding parameter 4: type 'dict' is not supported` — Chainlit 2.11's mode selector attaches a `modes` dict to every user_message, and upstream json.dumps()es only `metadata` / `generation`, so the raw dict was bound to our TEXT column. The write raised inside the persistence path, so chat kept working while **every user message was silently lost from the history DB**
