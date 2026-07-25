@@ -35,3 +35,59 @@ a[href*="chainlit.io"] {
 #user-nav-button {
     display: none !important;
 }
+
+/* =====================================================================
+   Phone layer
+   ---------------------------------------------------------------------
+   Gated on `html.simpler-phone`, which simpler-bridge.js mirrors from the
+   shell's own `body.is-mobile` (matchMedia ≤640px) — NOT on the iframe's
+   width, which a narrowed desktop window can also make small. Nothing
+   here applies unless the shell says "phone".
+
+   The shell hands this document an exact pixel height (the assistant view
+   is height-locked: app-main minus its toolbar, see static/css/mobile.css),
+   so Chainlit's own flex-grow/overflow-y-auto layout already fills the
+   space and scrolls its message list. What's left is fitting the composer
+   into ~370px and dropping chrome that doesn't earn its space.
+   ===================================================================== */
+
+/* Starters (the Doing tasks + "Plan my day") are a desktop convenience: on a
+   phone they push the composer around and eat the welcome screen. The
+   backend still ships them — a wider viewport gets them back with no
+   reload. */
+html.simpler-phone #starters {
+    display: none !important;
+}
+
+/* The composer's control row (upload · MCP · model · reasoning · context ·
+   command, then send) is laid out as one nowrap line and overflows a phone
+   viewport by ~100px. Let the row and its groups wrap instead. */
+html.simpler-phone #message-composer {
+    padding: 8px 10px;
+}
+html.simpler-phone #message-composer > div:last-child,
+html.simpler-phone #message-composer > div:last-child > div {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    min-width: 0;
+}
+/* The pickers (left group) take the slack and wrap among themselves; Send
+   keeps its place at the right of the first line. flex-basis 0 is what does
+   it: wrapping is decided on the basis, so both groups stay on one line and
+   the left one absorbs what's left. */
+html.simpler-phone #message-composer > div:last-child > div:first-child {
+    flex: 1 1 0;
+}
+html.simpler-phone #message-composer > div:last-child > div:last-child {
+    flex: 0 0 auto;
+}
+
+/* Empty state: Chainlit centres the logo + composer in the available height,
+   which on a phone leaves a big void under the header and puts the composer
+   mid-screen. Sit them at the bottom instead, where a phone keyboard expects
+   them. Only the welcome screen is affected — once a thread starts, the
+   normal chat layout takes over. */
+html.simpler-phone #welcome-screen {
+    justify-content: flex-end;
+    margin-top: 0;
+}

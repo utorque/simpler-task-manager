@@ -45,6 +45,34 @@ function applyMobileBodyClass() {
     document.body.classList.toggle('is-mobile', MOBILE_MQ.matches);
 }
 
+// Destinations whose view becomes a column flexbox on phones: a fixed-height
+// toolbar on top and one child that owns the rest of the viewport and scrolls
+// itself (no page scroll, no nested scrollbars). The assistant view is a
+// flexbox on every size — see switchDestination.
+const MOBILE_FLEX_VIEWS = ['tasks', 'notes', 'calendar'];
+
+function viewDisplayMode(destination) {
+    if (destination === 'assistant') return 'flex';
+    return (isMobile() && MOBILE_FLEX_VIEWS.includes(destination)) ? 'flex' : 'block';
+}
+
+// Re-apply the display modes that depend on the breakpoint. Called when the
+// media query flips (rotation, desktop window resize) so a view laid out for
+// one size doesn't stay that way. Only ever changes 'flex' ⇄ 'block' on the
+// VISIBLE view; hidden views keep their inline display:none.
+function applyResponsiveViewDisplay() {
+    if (currentDestination) {
+        const view = document.getElementById(`view-${currentDestination}`);
+        if (view && view.style.display !== 'none') {
+            view.style.display = viewDisplayMode(currentDestination);
+        }
+    }
+    const overview = document.getElementById('overviewView');
+    if (overview && overview.style.display !== 'none') {
+        overview.style.display = isMobile() ? 'flex' : 'block';
+    }
+}
+
 // ===== Mobile: space filter as a dropdown =====
 // A chip row for ~10 spaces eats most of a phone screen, so every
 // .space-chips container gets a companion <select> (CSS swaps chips ↔ select
@@ -141,7 +169,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Reflect the phone breakpoint on <body> (drives a few JS-side choices;
     // the CSS layer keys off the media query directly).
     applyMobileBodyClass();
-    MOBILE_MQ.addEventListener('change', applyMobileBodyClass);
+    MOBILE_MQ.addEventListener('change', () => {
+        applyMobileBodyClass();
+        applyResponsiveViewDisplay();
+        if (window.NotesView && window.NotesView.refresh) window.NotesView.refresh();
+    });
 
     // Initialize calendar
     initCalendar();
@@ -271,8 +303,10 @@ function switchDestination(destination) {
 
     document.querySelectorAll('.app-view').forEach(v => v.style.display = 'none');
     const view = document.getElementById(`view-${destination}`);
-    // The assistant view is a column flexbox (toolbar above the iframe).
-    if (view) view.style.display = destination === 'assistant' ? 'flex' : 'block';
+    // The assistant view is a column flexbox (toolbar above the iframe); on
+    // phones Tasks and Notes are too (viewDisplayMode). Desktop is unchanged:
+    // everything but the assistant stays display:block.
+    if (view) view.style.display = viewDisplayMode(destination);
 
     document.querySelectorAll('#appNav .nav-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.destination === destination);
@@ -312,7 +346,10 @@ function switchTasksSubview(subview) {
     localStorage.setItem('tasksSubview', subview);
 
     document.getElementById('boardView').style.display = subview === 'board' ? 'flex' : 'none';
-    document.getElementById('overviewView').style.display = subview === 'overview' ? 'block' : 'none';
+    // Phones: the overview is a column flexbox so its "Show done" bar and list
+    // can be ordered last (CSS `order`) and the whole thing scrolls as one.
+    document.getElementById('overviewView').style.display =
+        subview === 'overview' ? (isMobile() ? 'flex' : 'block') : 'none';
     document.getElementById('boardTab').classList.toggle('active', subview === 'board');
     document.getElementById('overviewTab').classList.toggle('active', subview === 'overview');
 
@@ -489,15 +526,6 @@ function wireTaskClickDelegation(containerId, selector) {
                 openTaskSourceNote(taskId);
                 return;
             }
-            // Phone-only "move / actions" button → status action sheet. The
-            // button is display:none on desktop, so this branch is a no-op
-            // there; the isMobile() guard is belt-and-suspenders.
-            if (e.target.closest('.board-card-move')) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (isMobile()) openCardActionSheet(taskId);
-                return;
-            }
         }
 
         // Inline priority edit (board card only): a plain click on the
@@ -539,6 +567,11 @@ function wireTaskClickDelegation(containerId, selector) {
             } else {
                 toggleTaskFreeze(taskId);
             }
+        } else if (isMobile() && item.classList.contains('board-card')) {
+            // Phones have no modifier keys and no drag, so a tap on a board
+            // card opens the action sheet (status · freeze · edit) instead of
+            // going straight to the edit modal — one tap away from either.
+            openCardActionSheet(taskId);
         } else {
             editTask(taskId);
         }
@@ -573,7 +606,7 @@ async function cycleTaskStatus(taskId) {
 }
 
 // ===== Mobile: card action sheet (tap-based status change) =====
-// On phones drag is disabled, so the card "move" button opens this lightweight
+// On phones drag is disabled, so tapping a board card opens this lightweight
 // bottom sheet. It reuses the existing mutation paths (status PUT, freeze,
 // edit modal) — no new server behaviour. It is a plain DOM overlay, not a
 // Bootstrap modal, so it never collides with the app's modal plumbing.
@@ -649,6 +682,11 @@ const MOBILE_DETAIL_VIEWS = [
 function openMobileDetail(layoutSel) {
     if (!isMobile()) return;
     document.querySelector(layoutSel)?.classList.add('mobile-detail-open');
+    // The notes editor only gets its real height once the overlay is up, and
+    // CodeMirror measures on layout — remeasure on the next frame.
+    if (layoutSel === '.notes-layout' && window.NotesView && window.NotesView.refresh) {
+        requestAnimationFrame(() => window.NotesView.refresh());
+    }
 }
 
 function resetMobileDetail() {
@@ -1306,9 +1344,6 @@ function renderBoardCard(task) {
                 <div class="board-card-side">
                     <div class="board-card-priority ${priorityClass}">${displayPriority(task.priority)}</div>
                     <button type="button" class="board-card-addsub" title="Add subtask">+</button>
-                    <!-- Phone-only: opens the status/actions sheet (drag is
-                         disabled on touch). Hidden on desktop via mobile.css. -->
-                    <button type="button" class="board-card-move" title="Move / actions"><i class="fas fa-ellipsis-h"></i></button>
                 </div>
             </div>
             <div class="board-card-meta">

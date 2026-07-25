@@ -113,7 +113,33 @@
         window.postMessage(payload, window.location.origin);
     }
 
+    /* Tell the Chainlit document whether it is being viewed on a phone.
+     *
+     * The iframe's own width is NOT a safe proxy: a desktop window narrowed
+     * with the workspace drawer open can put the frame under 640px while the
+     * user is still on a mouse. The shell already knows the answer — it
+     * toggles `is-mobile` on its <body> from matchMedia — and we are
+     * same-origin with it, so mirror that flag onto our <html> as
+     * `.simpler-phone`. chat/public/simpler.css keys the phone rules off it
+     * (starters hidden, composer controls wrap, tighter padding). Re-checked
+     * every tick so rotation and desktop resizes are picked up, and it
+     * survives the iframe reloads below. */
+    function syncPhoneFlag() {
+        var phone = false;
+        try {
+            phone = !!(window.frameElement && window.parent && window.parent !== window &&
+                window.parent.document.body &&
+                window.parent.document.body.classList.contains('is-mobile'));
+        } catch (e) {
+            phone = false;   // not framed, or a cross-origin parent
+        }
+        document.documentElement.classList.toggle('simpler-phone', phone);
+    }
+    // Before first paint, so the starters never flash in on a phone.
+    syncPhoneFlag();
+
     function tick() {
+        syncPhoneFlag();
         sync();
         pumpPinnedTask();
         reloadIfStartersStale();

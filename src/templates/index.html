@@ -72,11 +72,14 @@
             <div class="tasks-toolbar">
                 <div class="space-chips" id="spaceChips"></div>
                 <div class="view-tabs">
+                    <!-- The labels are wrapped so the phone layer can show the
+                         icon alone (.btn-label, hidden ≤640px) — desktop keeps
+                         icon + text exactly as before. -->
                     <button class="view-tab" id="boardTab" onclick="switchTasksSubview('board')">
-                        <i class="fas fa-columns"></i> Board
+                        <i class="fas fa-columns"></i> <span class="btn-label">Board</span>
                     </button>
                     <button class="view-tab" id="overviewTab" onclick="switchTasksSubview('overview')">
-                        <i class="fas fa-chart-pie"></i> Overview
+                        <i class="fas fa-chart-pie"></i> <span class="btn-label">Overview</span>
                     </button>
                 </div>
             </div>
@@ -136,7 +139,9 @@
 
             <!-- Overview (grouped by space, kept as the secondary view) -->
             <div id="overviewView" style="display: none;">
-                <div class="d-flex justify-content-end mb-2">
+                <!-- overview-done-bar / -section are ordered last on phones
+                     (CSS `order` in mobile.css); on desktop they stay first. -->
+                <div class="d-flex justify-content-end mb-2 overview-done-bar">
                     <button class="btn btn-sm btn-outline-secondary" id="overviewDoneToggle"
                             onclick="toggleOverviewDone()" title="Show/hide finished tasks">
                         <i class="fas fa-check"></i> Show done
@@ -231,18 +236,18 @@
                 <div class="notes-toolbar-actions">
                     <button class="btn notes-download-btn" id="downloadNotesBtn"
                             title="Download the notes in view as markdown (Ctrl+click notes in the list to download only those)">
-                        <i class="fas fa-download"></i> <span id="downloadNotesLabel">Download</span>
+                        <i class="fas fa-download"></i> <span id="downloadNotesLabel" class="btn-label">Download</span>
                     </button>
                     <!-- Public read-only share of the OPEN note. Disabled until a note
                          is open. Once shared the label flips to "Copy link" and the
                          Stop-sharing button appears. -->
                     <button class="btn notes-download-btn" id="shareNoteBtn" disabled
                             title="Create a public read-only link to this note and copy it to the clipboard">
-                        <i class="fas fa-share-nodes"></i> <span id="shareNoteLabel">Share</span>
+                        <i class="fas fa-share-nodes"></i> <span id="shareNoteLabel" class="btn-label">Share</span>
                     </button>
                     <button class="btn notes-download-btn notes-stop-share-btn" id="stopShareBtn" style="display: none;"
                             title="Revoke the public link for this note">
-                        <i class="fas fa-link-slash"></i> Stop sharing
+                        <i class="fas fa-link-slash"></i> <span class="btn-label">Stop sharing</span>
                     </button>
                 </div>
             </div>
@@ -267,7 +272,7 @@
                         <span id="saveIndicator" class="ms-2 small text-muted"></span>
                     </div>
                     <textarea id="noteEditor"></textarea>
-                    <div class="mt-2 d-flex gap-2">
+                    <div class="mt-2 d-flex gap-2 notes-editor-actions">
                         <button class="btn btn-sm btn-outline-primary" id="notePromoteBtn" disabled title="Select text first">
                             <i class="fas fa-plus-square"></i> Add as task
                         </button>
@@ -374,11 +379,11 @@
                 <div class="space-chips" id="assistantSpaceChips"></div>
                 <button class="btn btn-sm btn-outline-secondary ms-auto" id="workspaceDrawerBtn"
                         title="Workspace files — press W">
-                    <i class="fas fa-folder-open"></i> Files
+                    <i class="fas fa-folder-open"></i> <span class="btn-label">Files</span>
                 </button>
                 <button class="btn btn-sm btn-outline-secondary" id="assistantSettingsBtn"
                         title="Assistant settings — press ,">
-                    <i class="fas fa-sliders-h"></i> Settings
+                    <i class="fas fa-sliders-h"></i> <span class="btn-label">Settings</span>
                 </button>
             </div>
             <!-- Chat iframe + the persistent workspace drawer (issue 003.09,
