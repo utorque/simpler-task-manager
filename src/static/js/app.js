@@ -45,6 +45,47 @@ function applyMobileBodyClass() {
     document.body.classList.toggle('is-mobile', MOBILE_MQ.matches);
 }
 
+// ===== Mobile: space filter as a dropdown =====
+// A chip row for ~10 spaces eats most of a phone screen, so every
+// .space-chips container gets a companion <select> (CSS swaps chips ↔ select
+// at the phone breakpoint). Deliberately KISS: single selection only — the
+// Ctrl+click multi-space and Alt+click exclude conventions stay desktop-only,
+// and picking a space from the dropdown clears any exclusions. The chips
+// themselves are untouched (still rendered, just hidden on phones), so
+// desktop behaviour is byte-identical.
+//
+// `opts`: { spaces, selectedIds (array|null), excludedCount, allLabel, onPick }
+// onPick receives a space id, or null for "all".
+function syncMobileSpaceSelect(container, opts) {
+    if (!container) return;
+    let sel = container.nextElementSibling;
+    if (!sel || !sel.classList.contains('space-select-mobile')) {
+        sel = document.createElement('select');
+        sel.className = 'form-select form-select-sm space-select-mobile';
+        sel.setAttribute('aria-label', 'Filter by space');
+        container.after(sel);
+        sel.addEventListener('change', () => {
+            const v = sel.value;
+            if (v === 'multi') return;
+            opts.onPick(v === 'all' ? null : parseInt(v));
+        });
+    }
+    // The dropdown can only express "all" or exactly one space. A filter set
+    // up on desktop (several spaces, or exclusions) isn't representable, so
+    // show a disabled "Multiple spaces" entry rather than misreport it.
+    const ids = opts.selectedIds;
+    const single = ids !== null && ids.length === 1 && !opts.excludedCount;
+    const isAll = ids === null && !opts.excludedCount;
+    const value = single ? String(ids[0]) : (isAll ? 'all' : 'multi');
+
+    sel.innerHTML =
+        (value === 'multi' ? '<option value="multi" disabled>Multiple spaces</option>' : '') +
+        `<option value="all">${opts.allLabel}</option>` +
+        opts.spaces.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    sel.value = value;
+    if (!sel.value) sel.value = 'all'; // selected space was deleted
+}
+
 function parseStoredSpaceFilter() {
     const raw = localStorage.getItem('boardSpaceFilter');
     if (raw === null || raw === 'all') return null;
@@ -1106,6 +1147,18 @@ function renderAssistantSpaceChips() {
             renderAssistantSpaceChips();
         });
     });
+
+    // Phone: same filter as a single-select dropdown (chips are hidden there).
+    syncMobileSpaceSelect(container, {
+        spaces,
+        selectedIds: filter,
+        excludedCount: 0, // the assistant filter has no exclude concept
+        allLabel: 'All spaces',
+        onPick: (id) => {
+            setAssistantSpaceFilter(id === null ? null : [id]);
+            renderAssistantSpaceChips();
+        }
+    });
 }
 
 function renderSpaceChips() {
@@ -1162,6 +1215,21 @@ function renderSpaceChips() {
             storeExcludedSpaces();
             renderTasksView();
         });
+    });
+
+    // Phone: same filter as a single-select dropdown (chips are hidden there).
+    syncMobileSpaceSelect(container, {
+        spaces,
+        selectedIds: boardSpaceFilter,
+        excludedCount: boardExcludedSpaces.size,
+        allLabel: 'All spaces',
+        onPick: (id) => {
+            boardSpaceFilter = id === null ? null : [id];
+            boardExcludedSpaces.clear();
+            storeSpaceFilter();
+            storeExcludedSpaces();
+            renderTasksView();
+        }
     });
 }
 

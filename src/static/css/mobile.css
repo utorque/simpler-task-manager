@@ -16,6 +16,9 @@
 /* --- mobile-only elements: hidden everywhere by default --- */
 .board-card-move { display: none; }
 .mobile-back-btn { display: none; }
+/* Companion <select> for each .space-chips row (app.js syncMobileSpaceSelect).
+   Desktop keeps the chips and never shows this. */
+.space-select-mobile { display: none; }
 
 /* --- Card action sheet (built by app.js openCardActionSheet, phone-only).
    These nodes are only ever created on phones, so styling them at top level
@@ -164,14 +167,17 @@
   .tasks-toolbar,
   .notes-toolbar,
   .assistant-toolbar { flex-wrap: wrap; gap: 8px; row-gap: 8px; }
-  .space-chips {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    padding-bottom: 2px;
+  /* Space filter: a chip row for ~10 spaces would eat most of the screen, so
+     phones get the companion dropdown instead (single-select — see
+     syncMobileSpaceSelect). The chips stay in the DOM, just hidden. */
+  .space-chips { display: none; }
+  .space-select-mobile {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 16rem;
+    min-height: 38px;
   }
-  .space-chips::-webkit-scrollbar { display: none; }
 
   /* Bigger default tap targets for the small controls. */
   .btn, .board-col-add, .view-tab { min-height: 38px; }
