@@ -6,11 +6,11 @@ for the integrated app, or standalone for development:
     CHAINLIT_APP_ROOT=chat chainlit run chat/chainlit_app.py
 
 Responsibilities here are wiring only — auth bridging, history persistence,
-model picking, slash commands, starters, the space-filter bridge, and
-streaming the provider reply. The reusable logic lives in the sibling
-modules (`auth_bridge`, `data_layer`, `providers`, `simpler_client`,
-`workspace`, `commands`), which stay importable and testable without
-Chainlit's runtime.
+model picking, slash commands, starters, the space-filter bridge, naming new
+threads, and streaming the provider reply. The reusable logic lives in the
+sibling modules (`auth_bridge`, `data_layer`, `providers`, `simpler_client`,
+`workspace`, `commands`, `thread_naming`), which stay importable and testable
+without Chainlit's runtime.
 """
 
 import json
@@ -30,7 +30,9 @@ settings.ensure_chainlit_env()  # before anything imports chainlit
 
 import chainlit as cl  # noqa: E402
 
-from chat import assistant_settings, commands, files, modes, sandbox_tools, simpler_client, skills, web_tools, workspace  # noqa: E402
+from chainlit.data import get_data_layer  # noqa: E402
+
+from chat import assistant_settings, commands, files, modes, sandbox_tools, simpler_client, skills, thread_naming, web_tools, workspace  # noqa: E402
 from chat.agent import AgentHooks, run_agent  # noqa: E402
 from chat.auth_bridge import is_authenticated  # noqa: E402
 from chat.data_layer import build_data_layer  # noqa: E402
@@ -330,6 +332,9 @@ async def register_commands(simpler: bool = True):
 
 @cl.on_chat_start
 async def on_chat_start():
+    # A brand-new chat: its first message earns it a title (see
+    # auto_name_thread). Resumed threads keep the name they already have.
+    cl.user_session.set(AUTO_NAME_PENDING, True)
     await register_commands()
     await publish_modes()
     if not settings.ai_api_key():
@@ -344,6 +349,7 @@ async def on_chat_resume(thread):
     # Chainlit restores the message history into the chat context itself.
     # Pre-Modes threads keep their history; their old profile selection is
     # simply gone (no backfill) — the pickers start at the defaults.
+    cl.user_session.set(AUTO_NAME_PENDING, False)  # already named, never rename
     await register_commands()
     await publish_modes()
 
@@ -483,6 +489,58 @@ class UIHooks(AgentHooks):
             await step.update()
 
 
+# ===== Chat auto-naming =======================================================
+# Chainlit titles a thread with the user's first message verbatim, so the
+# history sidebar reads as a column of half-paragraphs. On a new chat's first
+# message we ask the model for a 2-3 word title instead (chat/thread_naming.py
+# owns the prompt and the cleanup) and write it through the data layer.
+
+AUTO_NAME_PENDING = 'auto_name_pending'
+
+
+def title_llm() -> LLMClient:
+    """A no-frills client for the naming call: no reasoning budget, and a
+    token cap sized for three words."""
+    return LLMClient(
+        api_key=settings.ai_api_key(),
+        base_url=settings.ai_base_url(),
+        max_tokens=thread_naming.TITLE_MAX_TOKENS,
+    )
+
+
+async def apply_thread_name(title: str) -> bool:
+    """Persist the current thread's new name and refresh the UI's thread list
+    (re-emitting `first_interaction` is what makes the sidebar refetch)."""
+    thread_id = cl.context.session.thread_id
+    layer = get_data_layer()
+    if not thread_id or layer is None:
+        return False
+    await layer.update_thread(thread_id=thread_id, name=title)
+    await cl.context.emitter.emit(
+        'first_interaction', {'interaction': title, 'thread_id': thread_id})
+    return True
+
+
+async def auto_name_thread(seed: str, model: str):
+    """Name a brand-new thread after its opening message. Runs once per
+    chat, and only AFTER the turn: Chainlit's own naming
+    (`emitter.init_thread`) fires concurrently with `on_message`, and it
+    would otherwise overwrite the title with the verbatim message."""
+    if not cl.user_session.get(AUTO_NAME_PENDING):
+        return
+    cl.user_session.set(AUTO_NAME_PENDING, False)
+    if not settings.auto_name_chats() or not settings.ai_api_key():
+        return
+    try:
+        title = await thread_naming.generate_title(
+            title_llm(), settings.title_model() or model, seed)
+        if title:
+            await apply_thread_name(title)
+    except Exception as e:
+        # The chat keeps Chainlit's default name; never surface this.
+        print(f'[assistant] chat auto-naming failed: {e}')
+
+
 @cl.on_message
 async def on_message(message: cl.Message):
     # Chat-bar Context picker: 'Generic' unplugs the whole Simpler layer for
@@ -537,4 +595,6 @@ async def on_message(message: cl.Message):
         )
     except Exception as e:  # surface provider errors in-chat, don't crash the session
         await cl.Message(content=f'❌ Provider error: {e}').send()
-        return
+
+    # First message of a new chat: retitle the thread (no-op afterwards).
+    await auto_name_thread(message.content, model)

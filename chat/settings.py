@@ -8,6 +8,10 @@ additive and all optional:
   CHAT_MODELS            comma-separated model ids offered in the model picker
                          (first = default). Unset -> just AI_MODEL.
   CHAT_MAX_TOKENS        max tokens per reply (Anthropic requires a value).
+  CHAT_AUTO_NAME         0 keeps Chainlit's default thread naming (the first
+                         message verbatim) instead of the 2-3 word title.
+  CHAT_TITLE_MODEL       model used to name new chats; unset -> the model the
+                         conversation itself runs on.
   SIMPLER_BASE_URL       base URL of the Simpler REST API as seen from the
                          assistant (in-process mount -> loopback default).
   CHAINLIT_AUTH_SECRET   JWT secret for Chainlit's own auth tokens; derived
@@ -51,6 +55,18 @@ def chat_models() -> list[str]:
 
 def max_tokens() -> int:
     return int(os.getenv('CHAT_MAX_TOKENS', '4096'))
+
+
+def auto_name_chats() -> bool:
+    """Whether a new chat gets a 2-3 word title on its first message.
+    CHAT_AUTO_NAME=0 keeps Chainlit's default (first message verbatim)."""
+    return os.getenv('CHAT_AUTO_NAME', '1') != '0'
+
+
+def title_model():
+    """Model that writes those titles (CHAT_TITLE_MODEL) — point it at a
+    small/cheap one. Unset -> the model the conversation runs on."""
+    return os.getenv('CHAT_TITLE_MODEL') or None
 
 
 def simpler_base_url() -> str:

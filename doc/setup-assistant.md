@@ -16,7 +16,10 @@ browser ──▶ web (uvicorn asgi:app :53000)
 ## What it can do
 
 - **Chat with history** — threads persist in `instance/chainlit.db`; pick the
-  model per conversation (`CHAT_MODELS`).
+  model per conversation (`CHAT_MODELS`). A new chat names itself in two or
+  three words from its first message, so the history sidebar stays readable
+  (`CHAT_AUTO_NAME=0` to keep Chainlit's verbatim naming, `CHAT_TITLE_MODEL`
+  to write the titles with a cheaper model).
 - **Slash commands** — `/task`, `/note`, `/tasks`, `/notes`, `/skill` inject
   workspace entities into the conversation (a task always brings its linked
   note along). Starters are generated from the tasks currently in *Doing*.

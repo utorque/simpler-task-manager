@@ -315,6 +315,8 @@ There is deliberately **no** `AIProvider.complete()` generalization — `cleanif
 | APP_PASSWORD | Yes | "admin" | Single shared password |
 | API_TOKEN | No | None | Bearer token for machine clients (MCP sidecar + embedded assistant); unset = bearer auth off and the assistant loses workspace access |
 | CHAT_MODELS | No | AI_MODEL | Comma-separated model ids offered in the assistant's model picker (first = default) |
+| CHAT_AUTO_NAME | No | 1 | Auto-title a new chat in 2-3 words from its first message; `0` keeps Chainlit's default (the message verbatim) |
+| CHAT_TITLE_MODEL | No | the chat's model | Model that writes those titles (point it at a small/cheap one) |
 | SIMPLER_MCP_URL | No | None | Simpler's MCP sidecar, pre-integrated as assistant tools (compose sets `http://mcp:8765/mcp`) |
 | SANDBOX_MCP_URL | No | None | Execution-sandbox MCP sidecar (compose sets `http://sandbox:8766/mcp`) |
 | CHAT_FILES_DIR | No | instance/assistant_files | Assistant file workspace (compose points it at the volume shared with the sandbox) |
@@ -359,6 +361,10 @@ Production notes: change `APP_PASSWORD`, generate a random `SECRET_KEY` (remembe
 **Embedded assistant (built in)**: the compose file also runs `mcp` (the MCP sidecar, streamable HTTP at `/mcp`, compose-network-only) and `sandbox` (the assistant's isolated execution sidecar, internal network + shared `/workspace` volume). The Chainlit assistant itself runs inside the `web` container (`asgi.py` mounts it same-origin at `/assistant`), gated by the normal login via a session-cookie auth bridge. Set `API_TOKEN` (`openssl rand -hex 32`) to give it workspace access — **walkthrough: `doc/setup-assistant.md`**.
 
 ## Version History
+
+**2026-07 — chats name themselves**:
+- ✅ New assistant chats are auto-titled in **two to three words** instead of Chainlit's verbatim first message, so the history sidebar reads as a list of topics. `chat/thread_naming.py` owns the naming prompt + the cleanup of whatever the model answers (quotes/labels/punctuation stripped, ≤3 words, ≤40 chars, capitalized, user's language kept); `chainlit_app.auto_name_thread` runs it once per chat **after** the turn (Chainlit's own `init_thread` naming races with `on_message` and would overwrite it), writes the name through the data layer and re-emits `first_interaction` so the sidebar refetches
+- ✅ Never costs a conversation anything: a dead/slow title model or an unusable answer falls back to the first words of the user's own message, and any failure is logged, not surfaced. `CHAT_AUTO_NAME=0` restores the old behavior; `CHAT_TITLE_MODEL` points the naming call at a cheap model (default: the chat's own)
 
 **2026-07 — Phone UI pass 2: locked viewport, one scroller per view (PC untouched)**:
 - ✅ Phones are now height-locked like desktop (`html, body { height: 100dvh; overflow: hidden }`, `app-main = 100dvh − header − bottom nav`) and every view divides that budget with flexbox instead of scrolling the page — the fix for the **double scrollbars** in the kanban, the note editor and the assistant. `viewDisplayMode()` is the JS half (Tasks/Notes/Calendar go `display:flex` on phones only), re-applied on breakpoint flips by `applyResponsiveViewDisplay()`
