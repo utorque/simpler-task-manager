@@ -147,6 +147,25 @@ window.NotesView = (function () {
                 loadNotes();
             });
         });
+
+        // Phone: same filter as a single-select dropdown (chips hidden there).
+        // Helper lives in app.js, which is loaded after this file — it exists
+        // by the time the view first renders, but guard anyway.
+        if (window.syncMobileSpaceSelect) {
+            window.syncMobileSpaceSelect(container, {
+                spaces: state.spaces,
+                selectedIds: state.selectedSpaceIds,
+                excludedCount: state.excludedSpaceIds.size,
+                allLabel: 'All',
+                onPick: (id) => {
+                    state.selectedSpaceIds = id === null ? null : [id];
+                    state.excludedSpaceIds.clear();
+                    storeSelection();
+                    renderSpaceChips();
+                    loadNotes();
+                }
+            });
+        }
     }
 
     // The space a NEW note lands in: the first visible (selected and not
