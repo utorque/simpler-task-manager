@@ -746,5 +746,12 @@ window.NotesView = (function () {
         return true;
     }
 
-    return { enter, saveNow, openNoteById };
+    // CodeMirror mis-measures whenever its box changes while it can't see it
+    // (the phone editor overlay opening, a breakpoint flip). The shell calls
+    // this from those seams.
+    function refresh() {
+        if (easyMDE) easyMDE.codemirror.refresh();
+    }
+
+    return { enter, saveNow, openNoteById, refresh };
 })();
